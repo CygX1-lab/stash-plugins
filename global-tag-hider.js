@@ -154,8 +154,27 @@ function applyHiding() {
   //     that represents one tag so we never accidentally hide a whole section.
   let replacementDone = false;
   document.querySelectorAll('a[href*="/tags/"]').forEach(link => {
-    const match = link.getAttribute("href").match(/\/tags\/(\d+)/);
-    if (!match || !hiddenTagIds.has(match[1])) return;
+    const href = link.getAttribute("href");
+    const match = href.match(/\/tags\/(\d+)/);
+
+    // Primary: match by numeric ID in the href (tag list page, most detail pages).
+    // Fallback: name-based slug URLs (e.g. /tags/pussy-licking on scene detail
+    //           pages).  We stamp a data attribute on first match so subsequent
+    //           applyHiding() calls can still find the link even after its text
+    //           has been overwritten by the replacement label.
+    let isHidden = false;
+    if (match) {
+      isHidden = hiddenTagIds.has(match[1]);
+    } else if (link.dataset.gthHidden) {
+      isHidden = true; // already stamped — still hidden
+    } else {
+      const textName = link.textContent.trim().toLowerCase();
+      if (hiddenNames.has(textName)) {
+        isHidden = true;
+        link.dataset.gthHidden = "1"; // stamp so we survive text mutation
+      }
+    }
+    if (!isHidden) return;
 
     // Tag-list page: the link lives inside a full card element.
     // Scene / performer detail: the link IS the badge (or sits in a tiny wrapper).

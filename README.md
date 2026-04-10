@@ -72,7 +72,7 @@ All preferences are available in **Settings → Plugins → Global Tag Hider** a
 
 | Setting | Description |
 |---|---|
-| Replace hidden tags with "Straight" | Relabels female tags as "Straight" instead of hiding them |
+| Replace hidden tags with… | Relabels female tags with a configurable label (e.g. "Straight" or "Straight Sex") instead of hiding them |
 | Hide female performers everywhere | Removes female performer cards and links across all pages |
 | Show floating 🙈 button | Toggle the FAB; use the Tags toolbar button or Settings panel to re-enable |
 
@@ -121,4 +121,5 @@ MIT
 
 ## ❤️ Credits
 
+Author: CygX1
 Built for the Stash community — for cleaner, focused, male/gay libraries.
