@@ -32,6 +32,8 @@ const DEFAULT_HIDDEN_TAGS = [
   "Young Woman (22-30)", "Young Woman (22\u201330)", "Woman 30-39",
   "Short Woman", "Average Height Woman", "Tall Woman",
   "White Woman", "Latin Woman", "Latina Woman", "Athletic Woman",
+  "Black Hair (Female)", "Blonde Hair (Female)", "Brown Hair (Female)", "Red Hair (Female)",
+  "Solo Female", "Transgender (Female)",
   "Woman's Heels",
   // Vaginal sex acts
   "Vaginal Sex", "Vaginal Penetration", "All Vaginal",
