@@ -1,0 +1,95 @@
+/* global-tag-hider.css - Gay Edition */
+
+.gth-modal {
+    background: #1a1a24 !important;
+    border: 1px solid #8b5cf6 !important;
+    border-radius: 16px !important;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.65) !important;
+    max-width: 680px !important;
+    width: 92% !important;
+    color: #e0e0ff !important;
+    font-family: Inter, system-ui, sans-serif;
+}
+
+.gth-modal h2 {
+    color: #c4b5fd !important;
+    border-bottom: 1px solid #4f46e5 !important;
+    padding-bottom: 14px !important;
+}
+
+.gth-search {
+    background: #27273a !important;
+    border: 2px solid #6366f1 !important;
+    color: white !important;
+    padding: 14px 16px !important;
+    border-radius: 12px !important;
+    width: 100% !important;
+    font-size: 1.02rem !important;
+    margin-bottom: 20px !important;
+}
+
+.gth-search:focus {
+    border-color: #a78bfa !important;
+    box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.35) !important;
+    outline: none;
+}
+
+.gth-list {
+    max-height: 340px;
+    overflow-y: auto;
+    background: #27273a;
+    border-radius: 12px;
+    padding: 8px;
+    border: 1px solid #4f46e5;
+}
+
+.gth-list-item {
+    padding: 13px 16px;
+    margin: 4px 0;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 1rem;
+}
+
+.gth-list-item:hover {
+    background: #4f46e5 !important;
+    color: white !important;
+    transform: translateX(6px);
+}
+
+.gth-hidden-item {
+    background: rgba(139, 92, 246, 0.18) !important;
+}
+
+.gth-unhide-btn {
+    background: #22c55e !important;
+    color: black !important;
+    border: none !important;
+    padding: 6px 16px !important;
+    border-radius: 9999px !important;
+    font-size: 0.85rem !important;
+    cursor: pointer !important;
+    font-weight: 500;
+}
+
+.gth-default-btn {
+    background: linear-gradient(90deg, #eab308, #f59e0b) !important;
+    color: black !important;
+    border: none !important;
+    padding: 12px 20px !important;
+    border-radius: 9999px !important;
+    cursor: pointer !important;
+    font-weight: 600;
+    font-size: 1rem;
+    width: 100%;
+    margin-bottom: 16px;
+}
+
+.gth-default-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(234, 179, 8, 0.4);
+}
