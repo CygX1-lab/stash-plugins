@@ -7,6 +7,10 @@
     box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.65) !important;
     max-width: 680px !important;
     width: 92% !important;
+    max-height: 90vh !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow: hidden !important;
     color: #e0e0ff !important;
     font-family: Inter, system-ui, sans-serif;
 }

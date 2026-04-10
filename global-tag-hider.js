@@ -33,6 +33,8 @@ const DEFAULT_HIDDEN_TAGS = [
   "Short Woman", "Average Height Woman", "Tall Woman",
   "White Woman", "Latin Woman", "Latina Woman", "Athletic Woman",
   "Woman's Heels",
+  // Vaginal sex acts
+  "Vaginal Sex", "Vaginal Penetration", "All Vaginal",
 ];
 
 // ---- Storage ----
@@ -259,19 +261,22 @@ function injectTagsPageButton() {
     wrapper.style.cssText = "display:flex;justify-content:flex-end;padding:4px 8px 8px;";
     wrapper.appendChild(makeToolbarBtn());
     firstCard.parentElement?.parentElement?.insertBefore(wrapper, firstCard.parentElement);
-    return;
+    if (document.getElementById("gth-tags-btn")) return;
   }
 
-  // Strategy 4: Top of <main>
-  if (mainEl) {
+  // Strategy 4: Fixed-position button anchored to the viewport — appended to document.body
+  // so React can never remove it via re-rendering.
+  if (!document.getElementById("gth-tags-btn")) {
     const wrapper = document.createElement("div");
-    wrapper.style.cssText = "display:flex;justify-content:flex-end;padding:8px;";
+    wrapper.id = "gth-tags-btn-wrapper";
+    // Sits just below the Stash navbar (~56 px tall) at the right edge
+    wrapper.style.cssText =
+      "position:fixed;top:64px;right:16px;z-index:8500;" +
+      "background:rgba(26,26,36,0.92);padding:4px 6px;border-radius:8px;" +
+      "border:1px solid #4f46e5;box-shadow:0 2px 8px rgba(0,0,0,0.4);";
     wrapper.appendChild(makeToolbarBtn());
-    mainEl.insertBefore(wrapper, mainEl.firstChild);
-    return;
+    document.body.appendChild(wrapper);
   }
-
-  console.warn("[GlobalTagHider] Could not find an injection point on the Tags page");
 }
 
 // ---- Settings page panel ----
@@ -429,14 +434,14 @@ async function showModal() {
 
   overlay.innerHTML = `
     <div class="gth-modal">
-      <div style="display:flex;justify-content:space-between;align-items:center;
-                  padding:20px 24px 14px;border-bottom:1px solid #4f46e5;">
-        <h2 style="margin:0;color:#c4b5fd;">🙈 Global Tag Hider — Gay Edition</h2>
+      <div style="flex-shrink:0;display:flex;justify-content:space-between;align-items:center;
+                  padding:16px 24px;border-bottom:1px solid #4f46e5;">
+        <h2 style="margin:0;color:#c4b5fd;font-size:1.2rem;">🙈 Global Tag Hider — Gay Edition</h2>
         <button id="gth-close"
           style="background:none;border:none;color:#e0e0ff;font-size:1.4rem;
                  cursor:pointer;line-height:1;padding:0 4px;">✕</button>
       </div>
-      <div style="padding:24px;">
+      <div style="flex:1;min-height:0;overflow-y:auto;padding:24px;">
 
         <!-- Preferences -->
         <div style="background:#12121e;border:1px solid #4f46e5;border-radius:12px;
@@ -584,6 +589,7 @@ async function showModal() {
 
 function onNavigation() {
   document.getElementById("gth-tags-btn")?.remove();
+  document.getElementById("gth-tags-btn-wrapper")?.remove();
   document.getElementById("gth-settings-panel")?.remove();
   injectSettingsPanel._warned = false;
   setTimeout(() => { applyHiding(); injectTagsPageButton(); injectSettingsPanel(); }, 600);
