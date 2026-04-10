@@ -2,7 +2,7 @@
   name: Global Tag Hider - Gay Edition
   metadata:
     description: Hide any tags globally from dropdowns and lists (with beautiful modal). Automatically hides common female tags on first activation. Perfect for male/gay-only Stash setups.
-  version: 1.3.4
-  date: 2026-04-10 23:30:00
+  version: 1.3.5
+  date: 2026-04-11 00:00:00
   path: global-tag-hider.zip
-  sha256: 5c60f809fef04191dc811cf4112bb4e2baeb708bdb72d0f525532cc61afd22ac
+  sha256: 06537dea28bedb336518baf6adf6ea759ce9fe4ba00c3bb5d1be9b583f39dde8

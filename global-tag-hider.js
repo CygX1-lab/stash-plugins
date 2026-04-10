@@ -20,7 +20,7 @@ let hideObserver          = null;
 const DEFAULT_HIDDEN_TAGS = [
   "Tits", "Big Tits", "Small Tits", "Natural Tits", "Fake Tits", "Huge Tits", "Medium Tits",
   "Cum on Tits", "Tit Worship", "Titjob", "Titty Fuck",
-  "Boobs", "Cleavage",
+  "Boobs", "Fake Boobs", "Medium Boobs", "Cleavage",
   "Pussy", "Wet Pussy", "Shaved Pussy", "Hairy Pussy", "Hairless Pussy", "Trimmed Pussy",
   "Innie Pussy", "Outie Pussy", "Cum on Pussy",
   "Pussy Licking", "Pussy Fingering", "Pussy Rubbing", "Pussy Gape", "Cunnilingus",
