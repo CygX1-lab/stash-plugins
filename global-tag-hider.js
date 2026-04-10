@@ -231,49 +231,60 @@ function makeToolbarBtn() {
 function injectTagsPageButton() {
   if (!isTagsPage() || document.getElementById("gth-tags-btn")) return;
 
-  // Strategy 1: Known Stash class-based selectors
-  const classBased =
-    document.querySelector(".NarrowFilterBar .ml-auto") ||
-    document.querySelector("[class*='FilterBar'] .ml-auto") ||
-    document.querySelector("[class*='filter-bar'] .ml-auto") ||
-    document.querySelector(".NarrowFilterBar") ||
-    document.querySelector("[class*='FilterBar']");
-
-  if (classBased) { classBased.appendChild(makeToolbarBtn()); return; }
-
-  // Strategy 2: Near other .btn buttons inside <main>
   const mainEl = document.querySelector("main");
+
+  // Strategy 1: Bootstrap utility classes — these are never hashed by CSS modules.
+  // Stash puts sort/filter controls inside a .ml-auto flex row.
+  const bootstrapRow =
+    document.querySelector("main .ml-auto") ||
+    document.querySelector("main .justify-content-end.d-flex") ||
+    document.querySelector("main .d-flex.justify-content-end");
+  if (bootstrapRow) {
+    bootstrapRow.appendChild(makeToolbarBtn());
+    if (document.getElementById("gth-tags-btn")) return;
+  }
+
+  // Strategy 2: Find by structure — walk buttons near the top of <main>
+  // and append into their immediate parent (the toolbar row).
   if (mainEl) {
-    const btns = mainEl.querySelectorAll("button.btn");
-    if (btns.length > 0) {
-      const parent = btns[btns.length - 1].closest("div, nav, header")
-        || btns[btns.length - 1].parentElement;
+    const btns = [...mainEl.querySelectorAll("button.btn")];
+    for (const btn of btns) {
+      const rect = btn.getBoundingClientRect();
+      if (rect.top < 0 || rect.top > 200) continue;
+      const parent = btn.parentElement;
       if (parent && !parent.querySelector("#gth-tags-btn")) {
-        parent.appendChild(makeToolbarBtn()); return;
+        parent.appendChild(makeToolbarBtn());
+        if (document.getElementById("gth-tags-btn")) return;
       }
+      break;
     }
   }
 
   // Strategy 3: Before the first tag card grid
-  const firstCard = document.querySelector(".card, [class*='Card']");
+  const firstCard = mainEl?.querySelector(".card, [class*='card'], [class*='Card']");
   if (firstCard) {
     const wrapper = document.createElement("div");
-    wrapper.style.cssText = "display:flex;justify-content:flex-end;padding:4px 8px 8px;";
+    wrapper.style.cssText = "display:flex;justify-content:flex-end;padding:4px 8px 12px;";
     wrapper.appendChild(makeToolbarBtn());
     firstCard.parentElement?.parentElement?.insertBefore(wrapper, firstCard.parentElement);
     if (document.getElementById("gth-tags-btn")) return;
   }
 
-  // Strategy 4: Fixed-position button anchored to the viewport — appended to document.body
-  // so React can never remove it via re-rendering.
-  if (!document.getElementById("gth-tags-btn")) {
+  // Strategy 4: Fixed-position fallback — appended to document.body so React can never
+  // remove it. Aligns vertically with whichever toolbar buttons are on-screen.
+  if (!document.getElementById("gth-tags-btn-wrapper")) {
+    const mainBtn = mainEl?.querySelector("button.btn");
+    let topPx = 64;
+    if (mainBtn) {
+      const r = mainBtn.getBoundingClientRect();
+      // Centre our button on the same horizontal band as the toolbar buttons
+      topPx = Math.round(r.top + window.scrollY + r.height / 2 - 15);
+    }
     const wrapper = document.createElement("div");
     wrapper.id = "gth-tags-btn-wrapper";
-    // Sits just below the Stash navbar (~56 px tall) at the right edge
     wrapper.style.cssText =
-      "position:fixed;top:64px;right:16px;z-index:8500;" +
-      "background:rgba(26,26,36,0.92);padding:4px 6px;border-radius:8px;" +
-      "border:1px solid #4f46e5;box-shadow:0 2px 8px rgba(0,0,0,0.4);";
+      `position:fixed;top:${topPx}px;right:16px;z-index:8500;` +
+      "display:flex;align-items:center;";
     wrapper.appendChild(makeToolbarBtn());
     document.body.appendChild(wrapper);
   }
@@ -324,13 +335,19 @@ function injectSettingsPanel() {
 
   const card = findPluginCard();
   if (!card) {
-    if (!injectSettingsPanel._warned) {
-      console.warn("[GlobalTagHider] Plugin card not found on settings page");
-      injectSettingsPanel._warned = true;
+    // Plugin list may not be rendered yet — keep retrying every 600ms
+    if (!injectSettingsPanel._retrying) {
+      injectSettingsPanel._retrying = true;
+      const interval = setInterval(() => {
+        if (!isSettingsPage()) { clearInterval(interval); injectSettingsPanel._retrying = false; return; }
+        if (document.getElementById("gth-settings-panel")) { clearInterval(interval); injectSettingsPanel._retrying = false; return; }
+        const c = findPluginCard();
+        if (c) { clearInterval(interval); injectSettingsPanel._retrying = false; injectSettingsPanel(); }
+      }, 600);
     }
     return;
   }
-  injectSettingsPanel._warned = false;
+  injectSettingsPanel._retrying = false;
 
   const panel = document.createElement("div");
   panel.id = "gth-settings-panel";
@@ -387,6 +404,15 @@ function injectSettingsPanel() {
   `;
 
   card.appendChild(panel);
+
+  // Self-healing: if React re-renders the plugin list and removes our panel, re-inject.
+  const panelObserver = new MutationObserver(() => {
+    if (!document.getElementById("gth-settings-panel") && isSettingsPage()) {
+      panelObserver.disconnect();
+      setTimeout(injectSettingsPanel, 150);
+    }
+  });
+  panelObserver.observe(card, { childList: true });
 
   document.getElementById("gth-s-replace").onchange = e => {
     replaceWithStraight = e.target.checked; savePreferences(); applyHiding();
@@ -590,8 +616,13 @@ async function showModal() {
 function onNavigation() {
   document.getElementById("gth-tags-btn")?.remove();
   document.getElementById("gth-tags-btn-wrapper")?.remove();
-  document.getElementById("gth-settings-panel")?.remove();
-  injectSettingsPanel._warned = false;
+  // Only remove the settings panel when navigating away from the settings page.
+  // Stash re-uses the same URL prefix for all settings sub-tabs, so if we're still
+  // on a settings page the panel should stay (the MutationObserver keeps it alive).
+  injectSettingsPanel._retrying = false;
+  if (!isSettingsPage()) {
+    document.getElementById("gth-settings-panel")?.remove();
+  }
   setTimeout(() => { applyHiding(); injectTagsPageButton(); injectSettingsPanel(); }, 600);
 }
 
