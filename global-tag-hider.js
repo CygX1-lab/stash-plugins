@@ -298,36 +298,58 @@ function isSettingsPage() {
 }
 
 function findPluginCard() {
-  // TreeWalker scans all text nodes — works regardless of class name hashing
+  // "Global Tag Hider" text appears in multiple sections:
+  //   • Plugins          — loaded plugin entries; THIS is where we want our panel
+  //   • Available Plugins — package registry rows (have Install / Update buttons)
+  //   • Installed Plugins — installed package rows (have Uninstall buttons)
+  //
+  // We collect all candidate card elements, then pick the one that does NOT
+  // carry any install/update/uninstall actions — that is the running-plugin entry.
+
+  const candidates = [];
   const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
   let node;
+
   while ((node = walker.nextNode())) {
     if (!node.textContent.trim().startsWith("Global Tag Hider")) continue;
 
     let el = node.parentElement;
+    let card = null;
     while (el && el !== document.body) {
       const tag = el.tagName.toLowerCase();
       const cls = (el.className || "").toLowerCase();
       if (
         tag === "li" || tag === "article" || tag === "section" ||
-        cls.includes("card") || cls.includes("package") ||
-        cls.includes("plugin") || cls.includes("panel")
-      ) return el;
-      // A full-width, tall-enough div is likely the plugin row
+        cls.includes("card") || cls.includes("plugin") || cls.includes("panel")
+      ) { card = el; break; }
       const rect = el.getBoundingClientRect();
       if (tag === "div" && rect.width > window.innerWidth * 0.4 && rect.height > 50)
-        return el;
+        { card = el; break; }
       el = el.parentElement;
     }
-    // Fallback: 4 levels up from the text node
-    let fallback = node.parentElement;
-    for (let i = 0; i < 4; i++) {
-      if (fallback?.parentElement && fallback.parentElement !== document.body)
-        fallback = fallback.parentElement;
+    if (!card) {
+      // Fallback: 4 levels up
+      card = node.parentElement;
+      for (let i = 0; i < 4; i++) {
+        if (card?.parentElement && card.parentElement !== document.body)
+          card = card.parentElement;
+      }
     }
-    return fallback;
+    if (card && !candidates.includes(card)) candidates.push(card);
   }
-  return null;
+
+  if (!candidates.length) return null;
+
+  // Prefer a card that has NO install / update / uninstall buttons —
+  // those belong to the Available/Installed Plugins sections, not to us.
+  for (const card of candidates) {
+    const hasPackageAction = [...card.querySelectorAll("button, a[role='button']")]
+      .some(b => /\b(install|update|uninstall)\b/i.test(b.textContent.trim()));
+    if (!hasPackageAction) return card;
+  }
+
+  // All candidates have package buttons — last resort, return the first
+  return candidates[0];
 }
 
 function injectSettingsPanel() {
