@@ -2,10 +2,11 @@
 // Global Tag Hider - Gay Edition
 // =============================================
 
-const STORAGE_KEY               = "gth_hiddenTagIds";
-const DEFAULTS_APPLIED_KEY      = "gth_defaultsApplied";
-const REPLACE_KEY               = "gth_replaceWithStraight";
-const SHOW_FAB_KEY              = "gth_showFAB";
+const STORAGE_KEY                = "gth_hiddenTagIds";
+const DEFAULTS_APPLIED_KEY       = "gth_defaultsApplied";
+const REPLACE_KEY                = "gth_replaceWithStraight";
+const REPLACE_TAG_KEY            = "gth_replacementTag";
+const SHOW_FAB_KEY               = "gth_showFAB";
 const HIDE_FEMALE_PERFORMERS_KEY = "gth_hideFemalePerformers";
 
 let hiddenTagIds          = new Set();
@@ -13,6 +14,7 @@ let femalePerformerIds    = new Set();
 let allTagsMap            = new Map();
 let tagNameToId           = new Map();
 let replaceWithStraight   = false;
+let replacementTagName    = "Straight Sex";
 let showFAB               = true;
 let hideFemalePerformers  = false;
 let hideObserver          = null;
@@ -56,12 +58,14 @@ function saveHiddenTags() {
 
 function loadPreferences() {
   replaceWithStraight  = localStorage.getItem(REPLACE_KEY)                === "true";
+  replacementTagName   = localStorage.getItem(REPLACE_TAG_KEY)            || "Straight Sex";
   showFAB              = localStorage.getItem(SHOW_FAB_KEY)               !== "false";
   hideFemalePerformers = localStorage.getItem(HIDE_FEMALE_PERFORMERS_KEY) === "true";
 }
 
 function savePreferences() {
   localStorage.setItem(REPLACE_KEY,                String(replaceWithStraight));
+  localStorage.setItem(REPLACE_TAG_KEY,            replacementTagName);
   localStorage.setItem(SHOW_FAB_KEY,               String(showFAB));
   localStorage.setItem(HIDE_FEMALE_PERFORMERS_KEY, String(hideFemalePerformers));
 }
@@ -145,21 +149,36 @@ function applyHiding() {
   if (hiddenTagIds.size === 0 && femalePerformerIds.size === 0) return;
   const hiddenNames = getHiddenTagNames();
 
-  // --- Tag cards (matched by tag ID in href) ---
-  let straightCardDone = false;
+  // --- Tag links — works on the Tags list page (cards) AND scene/performer
+  //     detail pages (inline badges).  We pick the smallest wrapping element
+  //     that represents one tag so we never accidentally hide a whole section.
+  let replacementDone = false;
   document.querySelectorAll('a[href*="/tags/"]').forEach(link => {
     const match = link.getAttribute("href").match(/\/tags\/(\d+)/);
     if (!match || !hiddenTagIds.has(match[1])) return;
-    const container =
-      link.closest(".card, .tag-card, li, [class*='col']") || findContainer(link);
 
-    if (replaceWithStraight && !straightCardDone) {
+    // Tag-list page: the link lives inside a full card element.
+    // Scene / performer detail: the link IS the badge (or sits in a tiny wrapper).
+    const container =
+      link.closest(".card, .tag-card, [class*='TagCard']") ||
+      link.closest(".badge, [class*='tag-item'], [class*='TagLink'], [class*='tag-link']") ||
+      (link.offsetHeight < 50 ? link : null) ||
+      link.closest("li, [class*='col']") ||
+      findContainer(link);
+
+    if (replaceWithStraight && !replacementDone) {
+      // On tag-list cards look for a heading element; on inline badges change
+      // the link text directly.
       const heading = container.querySelector(
         "h5, h4, h3, h2, [class*='title'], [class*='Title']"
       );
-      if (heading && heading.textContent !== "Straight") heading.textContent = "Straight";
+      if (heading) {
+        if (heading.textContent !== replacementTagName) heading.textContent = replacementTagName;
+      } else {
+        if (link.textContent.trim() !== replacementTagName) link.textContent = replacementTagName;
+      }
       container.style.display = "";
-      straightCardDone = true;
+      replacementDone = true;
     } else {
       container.style.display = "none";
     }
@@ -178,12 +197,12 @@ function applyHiding() {
   }
 
   // --- react-select dropdown options ---
-  let straightOptionDone = false;
+  let replacementOptionDone = false;
   document.querySelectorAll(".react-select__option").forEach(el => {
     if (!hiddenNames.has(el.textContent.trim().toLowerCase())) return;
-    if (replaceWithStraight && !straightOptionDone) {
-      if (el.textContent.trim() !== "Straight") el.textContent = "Straight";
-      el.style.display = ""; straightOptionDone = true;
+    if (replaceWithStraight && !replacementOptionDone) {
+      if (el.textContent.trim() !== replacementTagName) el.textContent = replacementTagName;
+      el.style.display = ""; replacementOptionDone = true;
     } else { el.style.display = "none"; }
   });
 
@@ -192,7 +211,7 @@ function applyHiding() {
     const label = el.querySelector(".react-select__multi-value__label");
     if (!label || !hiddenNames.has(label.textContent.trim().toLowerCase())) return;
     if (replaceWithStraight) {
-      if (label.textContent !== "Straight") label.textContent = "Straight";
+      if (label.textContent !== replacementTagName) label.textContent = replacementTagName;
       el.style.display = "";
     } else { el.style.display = "none"; }
   });
@@ -292,6 +311,53 @@ function injectTagsPageButton() {
   }
 }
 
+// ---- Replacement-tag selector helper ----
+
+const PRESET_REPLACEMENT_TAGS = ["Straight", "Straight Sex"];
+
+function replacementTagSelectorHTML(idPrefix) {
+  const isCustom = !PRESET_REPLACEMENT_TAGS.includes(replacementTagName);
+  return `
+    <div id="${idPrefix}-opts" style="${replaceWithStraight ? "" : "display:none;"}margin-top:8px;margin-left:26px;">
+      <select id="${idPrefix}-select"
+        style="background:#27273a;color:#e0e0ff;border:1px solid #6366f1;
+               border-radius:6px;padding:4px 10px;font-size:0.88rem;cursor:pointer;">
+        <option value="Straight"     ${replacementTagName === "Straight"     ? "selected" : ""}>Straight</option>
+        <option value="Straight Sex" ${replacementTagName === "Straight Sex" ? "selected" : ""}>Straight Sex</option>
+        <option value="__custom__"   ${isCustom ? "selected" : ""}>Custom…</option>
+      </select>
+      <input type="text" id="${idPrefix}-custom"
+        placeholder="Custom label"
+        value="${isCustom ? replacementTagName : ""}"
+        style="${isCustom ? "" : "display:none;"}margin-top:6px;width:160px;
+               background:#27273a;color:#e0e0ff;border:1px solid #6366f1;
+               border-radius:6px;padding:4px 10px;font-size:0.88rem;">
+    </div>`;
+}
+
+function wireReplacementTagSelector(idPrefix) {
+  const sel    = document.getElementById(`${idPrefix}-select`);
+  const custom = document.getElementById(`${idPrefix}-custom`);
+  if (!sel || !custom) return;
+
+  sel.onchange = () => {
+    if (sel.value === "__custom__") {
+      custom.style.display = "";
+      custom.focus();
+    } else {
+      custom.style.display = "none";
+      replacementTagName = sel.value;
+      savePreferences(); applyHiding();
+    }
+  };
+  custom.oninput = () => {
+    if (custom.value.trim()) {
+      replacementTagName = custom.value.trim();
+      savePreferences(); applyHiding();
+    }
+  };
+}
+
 // ---- Settings page panel ----
 
 function isSettingsPage() {
@@ -387,11 +453,13 @@ function injectSettingsPanel() {
         <input type="checkbox" id="gth-s-replace"
           style="margin-top:3px;width:15px;height:15px;cursor:pointer;"
           ${replaceWithStraight ? "checked" : ""}>
-        <div>
-          <div style="color:#e0e0ff;font-weight:500;">Replace hidden tags with "Straight"</div>
+        <div style="flex:1;">
+          <div style="color:#e0e0ff;font-weight:500;">Replace hidden tags with:</div>
           <div style="color:#888;font-size:0.82rem;margin-top:3px;">
-            Instead of hiding, female tags appear as "Straight".
+            Instead of hiding, female tags appear with the label below — on tag lists,
+            scene details and dropdown selectors.
           </div>
+          ${replacementTagSelectorHTML("gth-s-replace-tag")}
         </div>
       </label>
     </div>
@@ -438,8 +506,11 @@ function injectSettingsPanel() {
   });
   panelObserver.observe(card, { childList: true });
 
+  wireReplacementTagSelector("gth-s-replace-tag");
   document.getElementById("gth-s-replace").onchange = e => {
     replaceWithStraight = e.target.checked; savePreferences(); applyHiding();
+    const opts = document.getElementById("gth-s-replace-tag-opts");
+    if (opts) opts.style.display = replaceWithStraight ? "" : "none";
   };
   document.getElementById("gth-s-female-performers").onchange = async e => {
     hideFemalePerformers = e.target.checked; savePreferences();
@@ -502,12 +573,13 @@ async function showModal() {
             <input type="checkbox" id="gth-replace-toggle"
               style="margin-top:3px;width:16px;height:16px;cursor:pointer;"
               ${replaceWithStraight ? "checked" : ""}>
-            <div>
-              <div style="color:#e0e0ff;font-weight:500;">Replace hidden tags with "Straight"</div>
+            <div style="flex:1;">
+              <div style="color:#e0e0ff;font-weight:500;">Replace hidden tags with:</div>
               <div style="color:#a5a5d0;font-size:0.85rem;margin-top:4px;">
-                Instead of hiding, female tags appear as "Straight" — easy to spot and filter
-                straight scenes while keeping male performers in focus.
+                Instead of hiding, female tags appear with the label below — on tag lists,
+                scene details and dropdown selectors.
               </div>
+              ${replacementTagSelectorHTML("gth-modal-replace-tag")}
             </div>
           </label>
 
@@ -561,8 +633,11 @@ async function showModal() {
   overlay.addEventListener("click", e => { if (e.target === overlay) overlay.remove(); });
   document.getElementById("gth-close").onclick = () => overlay.remove();
 
+  wireReplacementTagSelector("gth-modal-replace-tag");
   document.getElementById("gth-replace-toggle").onchange = e => {
     replaceWithStraight = e.target.checked; savePreferences(); applyHiding();
+    const opts = document.getElementById("gth-modal-replace-tag-opts");
+    if (opts) opts.style.display = replaceWithStraight ? "" : "none";
     const s = document.getElementById("gth-s-replace"); if (s) s.checked = replaceWithStraight;
   };
   document.getElementById("gth-female-performers-toggle").onchange = async e => {
