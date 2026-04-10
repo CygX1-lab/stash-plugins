@@ -16,7 +16,7 @@ const DEFAULT_HIDDEN_TAGS = [
   "Tits", "Big Tits", "Small Tits", "Natural Tits", "Fake Tits", "Huge Tits", "Medium Tits",
   "Cum on Tits", "Tit Worship", "Titjob", "Titty Fuck",
   // Boobs / chest
-  "Boobs", "Cleavage", "Nipples",
+  "Boobs", "Cleavage",
   // Pussy variants
   "Pussy", "Wet Pussy", "Shaved Pussy", "Hairy Pussy", "Hairless Pussy", "Trimmed Pussy",
   "Innie Pussy", "Outie Pussy", "Cum on Pussy",
@@ -29,6 +29,13 @@ const DEFAULT_HIDDEN_TAGS = [
   // Female archetypes / misc
   "MILF", "Young Girl", "Schoolgirl", "Teen Girl (18\u201322)",
   "Girlfriend", "Other Person's Girlfriend", "For Girls",
+  // Female age ranges
+  "Young Woman (22-30)", "Young Woman (22\u201330)", "Woman 30-39",
+  // Female physical descriptors
+  "Short Woman", "Average Height Woman", "Tall Woman",
+  "White Woman", "Latin Woman", "Latina Woman",
+  // Female clothing / accessories
+  "Woman's Heels",
 ];
 
 // ---- Storage (localStorage) ----
