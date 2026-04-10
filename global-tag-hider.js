@@ -386,12 +386,17 @@ function isSettingsPage() {
 
 function findPluginCard() {
   // "Global Tag Hider" text appears in multiple sections:
-  //   • Plugins          — loaded plugin entries; THIS is where we want our panel
-  //   • Available Plugins — package registry rows (have Install / Update buttons)
-  //   • Installed Plugins — installed package rows (have Uninstall buttons)
+  //   • Plugins           — loaded plugin entries; THIS is where we want our panel
+  //   • Installed Plugins — installed package rows (Uninstall / Remove buttons)
+  //   • Available Plugins — package registry rows  (Install / Update buttons)
   //
-  // We collect all candidate card elements, then pick the one that does NOT
-  // carry any install/update/uninstall actions — that is the running-plugin entry.
+  // We collect all candidate card-like ancestors, then rank them using two
+  // independent signals:
+  //   1. Section heading — walk up checking preceding-sibling headings; if a
+  //      heading says "Installed" or "Available" we know it is the wrong section.
+  //   2. Package-action buttons — a card that contains install / update /
+  //      uninstall / remove buttons belongs to a package management section.
+  // The "Plugins" (running) entry has neither signal, so it wins.
 
   const candidates = [];
   const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
@@ -427,15 +432,43 @@ function findPluginCard() {
 
   if (!candidates.length) return null;
 
-  // Prefer a card that has NO install / update / uninstall buttons —
-  // those belong to the Available/Installed Plugins sections, not to us.
-  for (const card of candidates) {
-    const hasPackageAction = [...card.querySelectorAll("button, a[role='button']")]
-      .some(b => /\b(install|update|uninstall)\b/i.test(b.textContent.trim()));
-    if (!hasPackageAction) return card;
+  // Signal 1 helper — find the most-recent heading element that precedes `el`
+  // in the DOM (as a preceding sibling of any ancestor).  Returns its text, or "".
+  function nearestPrecedingHeading(el) {
+    let ancestor = el;
+    while (ancestor && ancestor !== document.body) {
+      let sib = ancestor.previousElementSibling;
+      while (sib) {
+        if (/^h[1-6]$/i.test(sib.tagName)) return sib.textContent.trim();
+        // Also check the last heading *inside* the sibling block
+        const inner = [...sib.querySelectorAll("h1,h2,h3,h4,h5,h6")].pop();
+        if (inner) return inner.textContent.trim();
+        sib = sib.previousElementSibling;
+      }
+      ancestor = ancestor.parentElement;
+    }
+    return "";
   }
 
-  // All candidates have package buttons — last resort, return the first
+  // Signal 2 helper — does the card contain a package-management action button?
+  function hasPackageAction(card) {
+    return [...card.querySelectorAll("button, [role='button'], a[role='button']")]
+      .some(b => /\b(install|update|uninstall|remove)\b/i.test(b.textContent.trim()));
+  }
+
+  // First pass — must pass BOTH signals (preferred: cleanly in the Plugins section)
+  for (const card of candidates) {
+    const heading = nearestPrecedingHeading(card);
+    if (/\b(installed|available)\b/i.test(heading)) continue;
+    if (!hasPackageAction(card)) return card;
+  }
+
+  // Second pass — at least no package-action buttons
+  for (const card of candidates) {
+    if (!hasPackageAction(card)) return card;
+  }
+
+  // Last resort — return the first candidate
   return candidates[0];
 }
 
