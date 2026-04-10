@@ -78,7 +78,11 @@ async function loadAllTags() {
 // ---- Defaults ----
 
 async function ensureDefaults() {
-  if (localStorage.getItem(DEFAULTS_APPLIED_KEY) === "true") return;
+  // Re-apply defaults if the hidden list is empty, even if the flag is set.
+  // This handles the case where a previous broken install set the flag without
+  // actually hiding anything.
+  const flagSet = localStorage.getItem(DEFAULTS_APPLIED_KEY) === "true";
+  if (flagSet && hiddenTagIds.size > 0) return;
 
   if (allTagsMap.size === 0) await loadAllTags();
 
@@ -121,30 +125,35 @@ function scheduleHiding() {
 }
 
 function applyHiding() {
+  if (hiddenTagIds.size === 0) return;
   const hiddenNames = getHiddenTagNames();
-  if (hiddenNames.size === 0) return;
 
-  // Dropdown options (react-select)
+  // --- Tag cards on the /tags page ---
+  // Match by tag ID extracted from the href ("/tags/123/scenes").
+  // This is the most reliable method — no text-matching needed.
+  document.querySelectorAll('a[href*="/tags/"]').forEach(link => {
+    const match = link.getAttribute("href").match(/\/tags\/(\d+)/);
+    if (!match) return;
+    const tagId = match[1];
+    if (hiddenTagIds.has(tagId)) {
+      // Hide the card wrapper or the closest meaningful container
+      const container = link.closest(".card, .tag-card, li, [class*='col-']") || link;
+      container.style.display = "none";
+    }
+  });
+
+  // --- react-select dropdown options (tag picker dropdowns) ---
+  // These don't have hrefs, so match by name text.
   document.querySelectorAll(".react-select__option").forEach(el => {
     const text = el.textContent.trim().toLowerCase();
     el.style.display = hiddenNames.has(text) ? "none" : "";
   });
 
-  // Selected tag chips in multi-select
+  // --- Selected tag chips inside a multi-select ---
   document.querySelectorAll(".react-select__multi-value").forEach(el => {
     const label = el.querySelector(".react-select__multi-value__label");
     if (label && hiddenNames.has(label.textContent.trim().toLowerCase())) {
       el.style.display = "none";
-    }
-  });
-
-  // Tag links/badges in detail pages (e.g. scene detail)
-  document.querySelectorAll('a[href*="/tags/"]').forEach(el => {
-    const text = el.textContent.trim().toLowerCase();
-    if (hiddenNames.has(text)) {
-      // Hide the chip wrapper if there is one, otherwise the link itself
-      const wrapper = el.closest(".tag-item, .badge, li");
-      (wrapper || el).style.display = "none";
     }
   });
 }
@@ -209,7 +218,6 @@ async function showModal() {
     const lower = filter.toLowerCase().trim();
     document.getElementById("gth-hidden-count").textContent = hiddenTagIds.size;
 
-    // Available
     const availableList = document.getElementById("gth-available");
     availableList.innerHTML = "";
     allTags
@@ -227,7 +235,6 @@ async function showModal() {
         availableList.appendChild(div);
       });
 
-    // Hidden
     const hiddenList = document.getElementById("gth-hidden-list");
     hiddenList.innerHTML = "";
     allTags
@@ -299,6 +306,7 @@ async function init() {
   console.log("[GlobalTagHider] Starting...");
   loadHiddenTags();
 
+  // Load tags, apply defaults, then hide. FAB is injected immediately.
   loadAllTags().then(async () => {
     await ensureDefaults();
     applyHiding();
@@ -306,11 +314,15 @@ async function init() {
 
   injectFAB();
 
-  // Watch for DOM changes (SPA navigation & dynamic rendering)
+  // Debounced observer for dynamic content (react-select dropdowns etc.)
   if (hideObserver) hideObserver.disconnect();
   hideObserver = new MutationObserver(scheduleHiding);
   hideObserver.observe(document.body, { childList: true, subtree: true });
 
+  // Re-hide on SPA navigation
+  if (window.PluginApi?.Event) {
+    PluginApi.Event.addEventListener("stash:location", () => setTimeout(applyHiding, 500));
+  }
   window.addEventListener("hashchange", () => setTimeout(applyHiding, 500));
   window.addEventListener("popstate", () => setTimeout(applyHiding, 500));
 
@@ -318,22 +330,12 @@ async function init() {
 }
 
 // ---- Bootstrap ----
+// Stash loads plugin scripts after the app is initialized, so PluginApi is
+// available immediately. Call init() directly — no need to wait or listen for
+// a "loaded" event that may have already fired.
 
-(async function bootstrap() {
-  // Wait up to 15s for PluginApi
-  const deadline = Date.now() + 15000;
-  while (!window.PluginApi && Date.now() < deadline) {
-    await new Promise(r => setTimeout(r, 200));
-  }
-
-  if (window.PluginApi?.Event) {
-    PluginApi.Event.addEventListener("stash:loaded", init);
-  } else {
-    // Fallback for older Stash or missing PluginApi
-    if (document.readyState === "loading") {
-      document.addEventListener("DOMContentLoaded", init);
-    } else {
-      init();
-    }
-  }
-})();
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", init);
+} else {
+  init();
+}
