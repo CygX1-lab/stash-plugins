@@ -1,260 +1,339 @@
 // =============================================
-// Global Tag Hider - GAY EDITION
-// Separate CSS file + beautiful modal
+// Global Tag Hider - Gay Edition
 // =============================================
 
-const PLUGIN_ID = "global-tag-hider";
-const STORAGE_KEY = "hiddenTagIds";
-const GAY_DEFAULT_APPLIED_KEY = "gayDefaultsApplied";
+const STORAGE_KEY = "gth_hiddenTagIds";
+const DEFAULTS_APPLIED_KEY = "gth_defaultsApplied";
 
-let hiddenTagIds = [];
+let hiddenTagIds = new Set(); // string IDs
+let allTagsMap = new Map();   // id (string) -> name
+let tagNameToId = new Map();  // lowercase name -> id (string)
+let hideObserver = null;
 
-// Common female tags hidden by default in Gay Edition
-const GAY_DEFAULT_TAGS = [
-  "tits", "big tits", "small tits", "natural tits", "fake tits", "huge tits",
-"boobs", "cleavage", "nipples", "pussy", "wet pussy", "shaved pussy",
-"hairy pussy", "cum on pussy",
-"pussy licking", "cunnilingus", "lesbian", "lesbian kissing", "girl on girl",
-"ff", "female masturbation", "squirt", "tribbing",
-"scissoring", "strap on", "milf", "young girl"
+// Default tags to hide on first run (case-insensitive matching against your Stash tags)
+const DEFAULT_HIDDEN_TAGS = [
+  // Tits
+  "Tits", "Big Tits", "Small Tits", "Natural Tits", "Fake Tits", "Huge Tits", "Medium Tits",
+  "Cum on Tits", "Tit Worship", "Titjob", "Titty Fuck",
+  // Boobs / chest
+  "Boobs", "Cleavage", "Nipples",
+  // Pussy variants
+  "Pussy", "Wet Pussy", "Shaved Pussy", "Hairy Pussy", "Hairless Pussy", "Trimmed Pussy",
+  "Innie Pussy", "Outie Pussy", "Cum on Pussy",
+  "Pussy Licking", "Pussy Fingering", "Pussy Rubbing", "Pussy Gape", "Cunnilingus",
+  // Cowgirl positions
+  "Cowgirl", "Reverse Cowgirl", "Anal Cowgirl", "Anal Reverse Cowgirl",
+  // Lesbian / female-focused
+  "Lesbian", "Lesbian Kissing", "Girl on Girl",
+  "FF", "Female Masturbation", "Squirt", "Tribbing", "Scissoring", "Strap-on",
+  // Female archetypes / misc
+  "MILF", "Young Girl", "Schoolgirl", "Teen Girl (18\u201322)",
+  "Girlfriend", "Other Person's Girlfriend", "For Girls",
 ];
 
-async function loadHiddenTags() {
+// ---- Storage (localStorage) ----
+
+function loadHiddenTags() {
   try {
-    const stored = await PluginApi.getPluginSetting(PLUGIN_ID, STORAGE_KEY);
-    hiddenTagIds = stored ? JSON.parse(stored) : [];
+    const stored = localStorage.getItem(STORAGE_KEY);
+    hiddenTagIds = new Set(stored ? JSON.parse(stored) : []);
   } catch (e) {
-    hiddenTagIds = [];
+    hiddenTagIds = new Set();
   }
 }
 
-async function saveHiddenTags() {
+function saveHiddenTags() {
   try {
-    await PluginApi.setPluginSetting(PLUGIN_ID, STORAGE_KEY, JSON.stringify(hiddenTagIds));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify([...hiddenTagIds]));
   } catch (e) {
     console.error("[GlobalTagHider] Save failed:", e);
   }
 }
 
-async function ensureGayDefaults() {
-  try {
-    const applied = await PluginApi.getPluginSetting(PLUGIN_ID, GAY_DEFAULT_APPLIED_KEY);
-    if (applied === "true") return;
+// ---- GraphQL (direct fetch) ----
 
-    await loadHiddenTags();
-    let added = 0;
+async function callGQL(query, variables = {}) {
+  const resp = await fetch("/graphql", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query, variables })
+  });
+  return resp.json();
+}
 
-    for (const name of GAY_DEFAULT_TAGS) {
-      const result = await PluginApi.callGQL(`
-      query FindTag($name: String!) {
-        findTagByName(name: $name) { id }
-      }
-      `, { name });
-
-      const tag = result.data?.findTagByName;
-      if (tag && !hiddenTagIds.includes(parseInt(tag.id))) {
-        hiddenTagIds.push(parseInt(tag.id));
-        added++;
+async function loadAllTags() {
+  const result = await callGQL(`
+    query FindAllTags {
+      findTags(filter: { per_page: -1 }) {
+        tags { id name }
       }
     }
+  `);
+  const tags = result.data?.findTags?.tags || [];
+  allTagsMap = new Map(tags.map(t => [String(t.id), t.name]));
+  tagNameToId = new Map(tags.map(t => [t.name.toLowerCase(), String(t.id)]));
+  return tags;
+}
 
-    if (added > 0) {
-      await saveHiddenTags();
-      console.log(`[GlobalTagHider Gay] Applied defaults: hid ${added} female tags`);
+// ---- Defaults ----
+
+async function ensureDefaults() {
+  if (localStorage.getItem(DEFAULTS_APPLIED_KEY) === "true") return;
+
+  if (allTagsMap.size === 0) await loadAllTags();
+
+  let added = 0;
+  for (const name of DEFAULT_HIDDEN_TAGS) {
+    const id = tagNameToId.get(name.toLowerCase());
+    if (id && !hiddenTagIds.has(id)) {
+      hiddenTagIds.add(id);
+      added++;
     }
-
-    await PluginApi.setPluginSetting(PLUGIN_ID, GAY_DEFAULT_APPLIED_KEY, "true");
-  } catch (e) {
-    console.warn("[GlobalTagHider] Could not apply gay defaults:", e);
   }
+
+  if (added > 0) {
+    saveHiddenTags();
+    console.log(`[GlobalTagHider] Applied defaults: hid ${added} tags`);
+  }
+
+  localStorage.setItem(DEFAULTS_APPLIED_KEY, "true");
 }
 
-function shouldHideTag(tag) {
-  return tag && tag.id && hiddenTagIds.includes(parseInt(tag.id));
+// ---- Hiding ----
+
+function getHiddenTagNames() {
+  const names = new Set();
+  for (const id of hiddenTagIds) {
+    const name = allTagsMap.get(id);
+    if (name) names.add(name.toLowerCase());
+  }
+  return names;
 }
 
-function applyHidingPatches() {
-  const observer = new MutationObserver(() => {
-    document.querySelectorAll('.tag, .react-select__option, .tag-select-option, [data-tag-id], [data-id]').forEach(el => {
-      const tagId = el.dataset.tagId || el.getAttribute('data-id');
-      if (tagId && shouldHideTag({ id: tagId })) {
-        el.style.display = 'none';
-      }
-    });
+let hideScheduled = false;
+function scheduleHiding() {
+  if (hideScheduled) return;
+  hideScheduled = true;
+  setTimeout(() => {
+    hideScheduled = false;
+    applyHiding();
+  }, 150);
+}
+
+function applyHiding() {
+  const hiddenNames = getHiddenTagNames();
+  if (hiddenNames.size === 0) return;
+
+  // Dropdown options (react-select)
+  document.querySelectorAll(".react-select__option").forEach(el => {
+    const text = el.textContent.trim().toLowerCase();
+    el.style.display = hiddenNames.has(text) ? "none" : "";
   });
 
-  observer.observe(document.body, { childList: true, subtree: true });
+  // Selected tag chips in multi-select
+  document.querySelectorAll(".react-select__multi-value").forEach(el => {
+    const label = el.querySelector(".react-select__multi-value__label");
+    if (label && hiddenNames.has(label.textContent.trim().toLowerCase())) {
+      el.style.display = "none";
+    }
+  });
 
-  setTimeout(() => {
-    document.querySelectorAll('.tag, .react-select__option').forEach(el => {
-      const tagId = el.dataset.tagId || el.getAttribute('data-id');
-      if (tagId && shouldHideTag({ id: tagId })) el.style.display = 'none';
-    });
-  }, 600);
+  // Tag links/badges in detail pages (e.g. scene detail)
+  document.querySelectorAll('a[href*="/tags/"]').forEach(el => {
+    const text = el.textContent.trim().toLowerCase();
+    if (hiddenNames.has(text)) {
+      // Hide the chip wrapper if there is one, otherwise the link itself
+      const wrapper = el.closest(".tag-item, .badge, li");
+      (wrapper || el).style.display = "none";
+    }
+  });
 }
 
-async function showHideTagsModal() {
-  await loadHiddenTags();
+// ---- Modal ----
 
-  const modalHTML = `
-  <div style="padding: 24px;">
-  <input type="text" id="gth-search" class="gth-search" placeholder="🔍 Search tags...">
+async function showModal() {
+  loadHiddenTags();
+  if (allTagsMap.size === 0) await loadAllTags();
 
-  <button id="gth-apply-defaults" class="gth-default-btn">
-  🌈 Apply Gay Defaults (hide common female tags)
-  </button>
+  document.getElementById("gth-overlay")?.remove();
 
-  <div style="color:#a5a5d0; margin-bottom:8px;">Available Tags — click to hide</div>
-  <div id="gth-available" class="gth-list"></div>
+  const overlay = document.createElement("div");
+  overlay.id = "gth-overlay";
+  overlay.style.cssText =
+    "position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:9999;" +
+    "display:flex;align-items:center;justify-content:center;";
 
-  <div style="color:#a5a5d0; margin:20px 0 8px;">Hidden Tags (${hiddenTagIds.length})</div>
-  <div id="gth-hidden" class="gth-list"></div>
-
-  <div style="margin-top:28px; text-align:right;">
-  <button id="gth-unhide-all" style="background:#ef4444; color:white; border:none; padding:10px 20px; border-radius:9999px; cursor:pointer;">Unhide All</button>
-  </div>
-  </div>
+  overlay.innerHTML = `
+    <div class="gth-modal">
+      <div style="display:flex;justify-content:space-between;align-items:center;
+                  padding:20px 24px 14px;border-bottom:1px solid #4f46e5;">
+        <h2 style="margin:0;color:#c4b5fd;">🙈 Global Tag Hider — Gay Edition</h2>
+        <button id="gth-close"
+          style="background:none;border:none;color:#e0e0ff;font-size:1.4rem;
+                 cursor:pointer;line-height:1;padding:0 4px;">✕</button>
+      </div>
+      <div style="padding:24px;">
+        <input type="text" id="gth-search" class="gth-search"
+               placeholder="🔍 Search tags...">
+        <button id="gth-apply-defaults" class="gth-default-btn">
+          🌈 Apply Gay Defaults (hide common female tags)
+        </button>
+        <div style="color:#a5a5d0;margin-bottom:8px;">
+          Available Tags — click to hide
+        </div>
+        <div id="gth-available" class="gth-list"></div>
+        <div style="color:#a5a5d0;margin:20px 0 8px;">
+          Hidden Tags (<span id="gth-hidden-count">0</span>)
+        </div>
+        <div id="gth-hidden-list" class="gth-list"></div>
+        <div style="margin-top:28px;text-align:right;">
+          <button id="gth-unhide-all"
+            style="background:#ef4444;color:white;border:none;padding:10px 20px;
+                   border-radius:9999px;cursor:pointer;">Unhide All</button>
+        </div>
+      </div>
+    </div>
   `;
 
-  const modal = PluginApi.createDialog({
-    title: "🙈 Global Tag Hider — Gay Edition",
-    content: modalHTML,
-    className: "gth-modal",
-    buttons: [{ text: "Close", onclick: () => modal.close() }]
-  });
+  document.body.appendChild(overlay);
+  overlay.addEventListener("click", e => { if (e.target === overlay) overlay.remove(); });
+  document.getElementById("gth-close").onclick = () => overlay.remove();
 
-  setTimeout(() => {
-    const searchInput = document.getElementById("gth-search");
+  const allTags = [...allTagsMap.entries()]
+    .map(([id, name]) => ({ id, name }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  const searchInput = document.getElementById("gth-search");
+
+  function renderLists(filter = "") {
+    const lower = filter.toLowerCase().trim();
+    document.getElementById("gth-hidden-count").textContent = hiddenTagIds.size;
+
+    // Available
     const availableList = document.getElementById("gth-available");
-    const hiddenList = document.getElementById("gth-hidden");
-
-    PluginApi.callGQL(`query AllTags { allTags { id name } }`).then(result => {
-      const allTags = result.data?.allTags || [];
-      renderLists(allTags, searchInput.value);
-
-      searchInput.addEventListener("input", () => renderLists(allTags, searchInput.value));
-    });
-
-    function renderLists(allTags, filter = "") {
-      const lower = filter.toLowerCase().trim();
-
-      // Available
-      availableList.innerHTML = "";
-      allTags
-      .filter(t => !hiddenTagIds.includes(parseInt(t.id)) && t.name.toLowerCase().includes(lower))
-      .sort((a,b) => a.name.localeCompare(b.name))
+    availableList.innerHTML = "";
+    allTags
+      .filter(t => !hiddenTagIds.has(t.id) && t.name.toLowerCase().includes(lower))
       .forEach(tag => {
         const div = document.createElement("div");
         div.className = "gth-list-item";
-        div.innerHTML = `☐ ${tag.name}`;
-        div.onclick = async () => {
-          hiddenTagIds.push(parseInt(tag.id));
-          await saveHiddenTags();
-          renderLists(allTags, searchInput.value);
-          applyHidingPatches();
+        div.textContent = `☐ ${tag.name}`;
+        div.onclick = () => {
+          hiddenTagIds.add(tag.id);
+          saveHiddenTags();
+          renderLists(searchInput.value);
+          applyHiding();
         };
         availableList.appendChild(div);
       });
 
-      // Hidden
-      hiddenList.innerHTML = "";
-      allTags
-      .filter(t => hiddenTagIds.includes(parseInt(t.id)) && t.name.toLowerCase().includes(lower))
-      .sort((a,b) => a.name.localeCompare(b.name))
+    // Hidden
+    const hiddenList = document.getElementById("gth-hidden-list");
+    hiddenList.innerHTML = "";
+    allTags
+      .filter(t => hiddenTagIds.has(t.id) && t.name.toLowerCase().includes(lower))
       .forEach(tag => {
         const div = document.createElement("div");
         div.className = "gth-list-item gth-hidden-item";
         div.innerHTML = `<span>${tag.name}</span><button class="gth-unhide-btn">Unhide</button>`;
-        div.querySelector("button").onclick = async (e) => {
+        div.querySelector("button").onclick = e => {
           e.stopPropagation();
-          hiddenTagIds = hiddenTagIds.filter(id => id !== parseInt(tag.id));
-          await saveHiddenTags();
-          renderLists(allTags, searchInput.value);
-          applyHidingPatches();
+          hiddenTagIds.delete(tag.id);
+          saveHiddenTags();
+          renderLists(searchInput.value);
+          applyHiding();
         };
         hiddenList.appendChild(div);
       });
+  }
+
+  renderLists();
+  searchInput.addEventListener("input", () => renderLists(searchInput.value));
+
+  document.getElementById("gth-apply-defaults").onclick = async () => {
+    if (!confirm("Apply Gay Defaults?\nThis will hide common female tags. Your manually hidden tags will remain.")) return;
+    let added = 0;
+    for (const name of DEFAULT_HIDDEN_TAGS) {
+      const id = tagNameToId.get(name.toLowerCase());
+      if (id && !hiddenTagIds.has(id)) {
+        hiddenTagIds.add(id);
+        added++;
+      }
     }
-
-    // Apply Gay Defaults
-    document.getElementById("gth-apply-defaults").onclick = async () => {
-      if (!confirm("Apply Gay Defaults?\nThis will hide common female tags.\nYour manually hidden tags will remain.")) return;
-
-      let added = 0;
-      for (const name of GAY_DEFAULT_TAGS) {
-        const result = await PluginApi.callGQL(`query FindTag($name: String!) { findTagByName(name: $name) { id } }`, { name });
-        const tag = result.data?.findTagByName;
-        if (tag && !hiddenTagIds.includes(parseInt(tag.id))) {
-          hiddenTagIds.push(parseInt(tag.id));
-          added++;
-        }
-      }
-
-      if (added > 0) {
-        await saveHiddenTags();
-        renderLists((await PluginApi.callGQL(`query AllTags { allTags { id name } }`)).data.allTags, searchInput.value);
-        applyHidingPatches();
-        alert(`Successfully added ${added} default female tags to the hidden list.`);
-      } else {
-        alert("All default female tags were already hidden.");
-      }
-    };
-
-    document.getElementById("gth-unhide-all").onclick = async () => {
-      if (confirm("Unhide ALL hidden tags?")) {
-        hiddenTagIds = [];
-        await saveHiddenTags();
-        renderLists((await PluginApi.callGQL(`query AllTags { allTags { id name } }`)).data.allTags, searchInput.value);
-        applyHidingPatches();
-      }
-    };
-  }, 100);
-}
-
-// UI Injection
-function injectUI() {
-  const addButton = () => {
-    document.querySelectorAll('.toolbar, .filter-toolbar, [role="toolbar"]').forEach(toolbar => {
-      if (toolbar.querySelector("#gth-hide-btn")) return;
-      const btn = document.createElement("button");
-      btn.id = "gth-hide-btn";
-      btn.className = "btn btn-secondary";
-      btn.innerHTML = `🙈 Hide Tags`;
-      btn.title = "Global Tag Hider — Gay Edition";
-      btn.style.marginLeft = "12px";
-      btn.onclick = showHideTagsModal;
-      toolbar.appendChild(btn);
-    });
+    saveHiddenTags();
+    applyHiding();
+    renderLists(searchInput.value);
+    alert(added > 0
+      ? `Added ${added} default tags to the hidden list.`
+      : "All default tags were already hidden (or not found in your Stash).");
   };
 
-  addButton();
-  new MutationObserver(addButton).observe(document.body, { childList: true, subtree: true });
-
-  if (typeof PluginApi.registerMenuItem === "function") {
-    PluginApi.registerMenuItem({
-      id: PLUGIN_ID,
-      label: "Global Tag Hider (Gay)",
-                               icon: "🙈",
-                               onclick: showHideTagsModal
-    });
-  }
+  document.getElementById("gth-unhide-all").onclick = () => {
+    if (!confirm("Unhide ALL hidden tags?")) return;
+    hiddenTagIds.clear();
+    saveHiddenTags();
+    renderLists(searchInput.value);
+    applyHiding();
+  };
 }
 
-// Initialize
+// ---- UI Injection ----
+
+function injectFAB() {
+  if (document.getElementById("gth-fab")) return;
+  const fab = document.createElement("button");
+  fab.id = "gth-fab";
+  fab.innerHTML = "🙈";
+  fab.title = "Global Tag Hider";
+  fab.style.cssText =
+    "position:fixed;bottom:24px;right:24px;width:56px;height:56px;" +
+    "border-radius:50%;background:#7c3aed;border:none;font-size:1.5rem;" +
+    "cursor:pointer;z-index:9000;box-shadow:0 4px 12px rgba(124,58,237,0.5);";
+  fab.onclick = showModal;
+  document.body.appendChild(fab);
+}
+
+// ---- Init ----
+
 async function init() {
-  console.log("🚀 Global Tag Hider — Gay Edition starting...");
-  await loadHiddenTags();
-  await ensureGayDefaults();
-  applyHidingPatches();
-  injectUI();
+  console.log("[GlobalTagHider] Starting...");
+  loadHiddenTags();
 
-  window.addEventListener("hashchange", () => setTimeout(applyHidingPatches, 700));
+  loadAllTags().then(async () => {
+    await ensureDefaults();
+    applyHiding();
+  });
 
-  console.log("✅ Gay Edition is ready. Common female tags are hidden by default.");
+  injectFAB();
+
+  // Watch for DOM changes (SPA navigation & dynamic rendering)
+  if (hideObserver) hideObserver.disconnect();
+  hideObserver = new MutationObserver(scheduleHiding);
+  hideObserver.observe(document.body, { childList: true, subtree: true });
+
+  window.addEventListener("hashchange", () => setTimeout(applyHiding, 500));
+  window.addEventListener("popstate", () => setTimeout(applyHiding, 500));
+
+  console.log("[GlobalTagHider] Ready.");
 }
 
-if (typeof PluginApi !== "undefined") {
-  PluginApi.on("loaded", init);
-} else {
-  window.addEventListener("load", init);
-}
+// ---- Bootstrap ----
+
+(async function bootstrap() {
+  // Wait up to 15s for PluginApi
+  const deadline = Date.now() + 15000;
+  while (!window.PluginApi && Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, 200));
+  }
+
+  if (window.PluginApi?.Event) {
+    PluginApi.Event.addEventListener("stash:loaded", init);
+  } else {
+    // Fallback for older Stash or missing PluginApi
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", init);
+    } else {
+      init();
+    }
+  }
+})();
