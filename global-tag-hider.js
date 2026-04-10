@@ -13,10 +13,10 @@ let hiddenTagIds = [];
 const GAY_DEFAULT_TAGS = [
   "tits", "big tits", "small tits", "natural tits", "fake tits", "huge tits",
 "boobs", "cleavage", "nipples", "pussy", "wet pussy", "shaved pussy",
-"hairy pussy", "creampie", "internal creampie", "cum on pussy",
+"hairy pussy", "cum on pussy",
 "pussy licking", "cunnilingus", "lesbian", "lesbian kissing", "girl on girl",
-"ff", "female masturbation", "dildo", "vibrator", "squirt", "tribbing",
-"scissoring", "strap on", "milf", "teen", "young girl", "bubble butt"
+"ff", "female masturbation", "squirt", "tribbing",
+"scissoring", "strap on", "milf", "young girl"
 ];
 
 async function loadHiddenTags() {
