@@ -11,7 +11,7 @@ let hiddenTagIds        = new Set(); // string IDs
 let allTagsMap          = new Map(); // id (string) -> name
 let tagNameToId         = new Map(); // lowercase name -> id (string)
 let replaceWithStraight = false;
-let showFAB             = true;     // default: show the floating button
+let showFAB             = true;
 let hideObserver        = null;
 
 // Default tags to hide on first run (case-insensitive matching against your Stash tags)
@@ -37,7 +37,7 @@ const DEFAULT_HIDDEN_TAGS = [
   "Young Woman (22-30)", "Young Woman (22\u201330)", "Woman 30-39",
   // Female physical descriptors
   "Short Woman", "Average Height Woman", "Tall Woman",
-  "White Woman", "Latin Woman", "Latina Woman",
+  "White Woman", "Latin Woman", "Latina Woman", "Athletic Woman",
   // Female clothing / accessories
   "Woman's Heels",
 ];
@@ -63,13 +63,12 @@ function saveHiddenTags() {
 
 function loadPreferences() {
   replaceWithStraight = localStorage.getItem(REPLACE_KEY) === "true";
-  // Default showFAB to true — only false if explicitly set
-  showFAB = localStorage.getItem(SHOW_FAB_KEY) !== "false";
+  showFAB             = localStorage.getItem(SHOW_FAB_KEY) !== "false";
 }
 
 function savePreferences() {
-  localStorage.setItem(REPLACE_KEY,   String(replaceWithStraight));
-  localStorage.setItem(SHOW_FAB_KEY,  String(showFAB));
+  localStorage.setItem(REPLACE_KEY,  String(replaceWithStraight));
+  localStorage.setItem(SHOW_FAB_KEY, String(showFAB));
 }
 
 // ---- GraphQL ----
@@ -129,32 +128,17 @@ function getHiddenTagNames() {
   return names;
 }
 
-let hideScheduled = false;
-function scheduleHiding() {
-  if (hideScheduled) return;
-  hideScheduled = true;
-  setTimeout(() => {
-    hideScheduled = false;
-    applyHiding();
-    injectTagsPageButton(); // re-inject if toolbar re-rendered
-  }, 150);
-}
-
 function applyHiding() {
   if (hiddenTagIds.size === 0) return;
   const hiddenNames = getHiddenTagNames();
 
-  // --- Tag cards on the /tags page (matched by ID in href) ---
+  // Tag cards on /tags page — matched by ID extracted from href
   let straightCardDone = false;
   document.querySelectorAll('a[href*="/tags/"]').forEach(link => {
     const match = link.getAttribute("href").match(/\/tags\/(\d+)/);
-    if (!match) return;
-    if (!hiddenTagIds.has(match[1])) return;
-
+    if (!match || !hiddenTagIds.has(match[1])) return;
     const container = link.closest(".card, .tag-card, li, [class*='col-']") || link;
-
     if (replaceWithStraight && !straightCardDone) {
-      // Show one representative "Straight" card; hide all others
       const heading = container.querySelector("h5, h4, h3, .card-section-title");
       if (heading && heading.textContent !== "Straight") heading.textContent = "Straight";
       container.style.display = "";
@@ -164,12 +148,10 @@ function applyHiding() {
     }
   });
 
-  // --- react-select dropdown options (matched by name text) ---
+  // react-select dropdown options — matched by name text
   let straightOptionDone = false;
   document.querySelectorAll(".react-select__option").forEach(el => {
-    const text = el.textContent.trim().toLowerCase();
-    if (!hiddenNames.has(text)) return;
-
+    if (!hiddenNames.has(el.textContent.trim().toLowerCase())) return;
     if (replaceWithStraight && !straightOptionDone) {
       if (el.textContent.trim() !== "Straight") el.textContent = "Straight";
       el.style.display = "";
@@ -179,11 +161,10 @@ function applyHiding() {
     }
   });
 
-  // --- Selected tag chips in multi-selects ---
+  // Selected tag chips in multi-selects
   document.querySelectorAll(".react-select__multi-value").forEach(el => {
     const label = el.querySelector(".react-select__multi-value__label");
     if (!label || !hiddenNames.has(label.textContent.trim().toLowerCase())) return;
-
     if (replaceWithStraight) {
       if (label.textContent !== "Straight") label.textContent = "Straight";
       el.style.display = "";
@@ -191,6 +172,20 @@ function applyHiding() {
       el.style.display = "none";
     }
   });
+}
+
+// ---- Debounced DOM change handler ----
+
+let changeScheduled = false;
+function onDOMChange() {
+  if (changeScheduled) return;
+  changeScheduled = true;
+  setTimeout(() => {
+    changeScheduled = false;
+    applyHiding();
+    injectTagsPageButton();
+    injectSettingsPanel();
+  }, 150);
 }
 
 // ---- Tags page toolbar button ----
@@ -201,12 +196,8 @@ function isTagsPage() {
 }
 
 function injectTagsPageButton() {
-  if (!isTagsPage()) return;
-  if (document.getElementById("gth-tags-btn")) return;
+  if (!isTagsPage() || document.getElementById("gth-tags-btn")) return;
 
-  // Try known Stash toolbar containers in order of specificity.
-  // Stash renders a filter/action bar at the top of list pages; the right-side
-  // section (ml-auto) is where action buttons live.
   const toolbar =
     document.querySelector(".NarrowFilterBar .ml-auto") ||
     document.querySelector(".filter-toolbar .ml-auto")  ||
@@ -217,24 +208,123 @@ function injectTagsPageButton() {
   if (!toolbar) return;
 
   const btn = document.createElement("button");
-  btn.id        = "gth-tags-btn";
-  btn.className = "btn btn-secondary";
+  btn.id          = "gth-tags-btn";
+  btn.className   = "btn btn-secondary";
   btn.style.marginLeft = "8px";
   btn.textContent = "Tag Hider";
-  btn.title = "Global Tag Hider — manage hidden tags";
-  btn.onclick = showModal;
+  btn.title       = "Global Tag Hider — manage hidden tags";
+  btn.onclick     = showModal;
   toolbar.appendChild(btn);
+}
+
+// ---- Settings page panel ----
+// Injected into Settings → Plugins so preferences are reachable even when
+// the floating button is disabled.
+
+function isSettingsPage() {
+  const url = window.location.pathname + window.location.search + window.location.hash;
+  return url.includes("settings");
+}
+
+function findPluginCard() {
+  // Walk all headings / titles looking for our plugin name
+  const candidates = document.querySelectorAll(
+    "h3, h4, h5, h6, .card-title, [class*='title'], strong, b"
+  );
+  for (const el of candidates) {
+    if (el.textContent.trim().startsWith("Global Tag Hider")) {
+      return el.closest(".card, [class*='card'], section, article, li") || el.parentElement;
+    }
+  }
+  return null;
+}
+
+function applySettingsToggle(id, key, onEnable, onDisable) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.onchange = e => {
+    if (e.target.checked) { onEnable(); } else { onDisable(); }
+    savePreferences();
+    applyHiding();
+  };
+}
+
+function injectSettingsPanel() {
+  if (!isSettingsPage() || document.getElementById("gth-settings-panel")) return;
+
+  const card = findPluginCard();
+  if (!card) return;
+
+  const panel = document.createElement("div");
+  panel.id = "gth-settings-panel";
+  panel.style.cssText =
+    "margin-top:16px;padding:14px 16px;border-top:1px solid #333;" +
+    "background:#12121e;border-radius:8px;";
+
+  panel.innerHTML = `
+    <div style="font-weight:600;color:#c4b5fd;margin-bottom:14px;">⚙️ Tag Hider Settings</div>
+
+    <div style="margin-bottom:14px;">
+      <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;">
+        <input type="checkbox" id="gth-s-replace"
+          style="margin-top:3px;width:15px;height:15px;cursor:pointer;"
+          ${replaceWithStraight ? "checked" : ""}>
+        <div>
+          <div style="color:#e0e0ff;font-weight:500;">Replace hidden tags with "Straight"</div>
+          <div style="color:#888;font-size:0.82rem;margin-top:3px;">
+            Instead of hiding, female tags appear as "Straight" — useful for filtering straight scenes.
+          </div>
+        </div>
+      </label>
+    </div>
+
+    <div style="margin-bottom:14px;">
+      <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;">
+        <input type="checkbox" id="gth-s-fab"
+          style="margin-top:3px;width:15px;height:15px;cursor:pointer;"
+          ${showFAB ? "checked" : ""}>
+        <div>
+          <div style="color:#e0e0ff;font-weight:500;">Show floating 🙈 button</div>
+          <div style="color:#888;font-size:0.82rem;margin-top:3px;">
+            When disabled, use the "Tag Hider" button in the Tags page toolbar instead.
+          </div>
+        </div>
+      </label>
+    </div>
+
+    <button id="gth-s-open" class="btn btn-primary btn-sm">
+      Open Tag Hider
+    </button>
+  `;
+
+  card.appendChild(panel);
+
+  // Wire toggles
+  applySettingsToggle(
+    "gth-s-replace",
+    REPLACE_KEY,
+    () => { replaceWithStraight = true; },
+    () => { replaceWithStraight = false; }
+  );
+  applySettingsToggle(
+    "gth-s-fab",
+    SHOW_FAB_KEY,
+    () => { showFAB = true;  injectFAB(); },
+    () => { showFAB = false; document.getElementById("gth-fab")?.remove(); }
+  );
+
+  const openBtn = document.getElementById("gth-s-open");
+  if (openBtn) openBtn.onclick = showModal;
 }
 
 // ---- Floating button (FAB) ----
 
 function injectFAB() {
-  if (!showFAB) return;
-  if (document.getElementById("gth-fab")) return;
+  if (!showFAB || document.getElementById("gth-fab")) return;
   const fab = document.createElement("button");
-  fab.id    = "gth-fab";
+  fab.id        = "gth-fab";
   fab.innerHTML = "🙈";
-  fab.title = "Global Tag Hider";
+  fab.title     = "Global Tag Hider";
   fab.style.cssText =
     "position:fixed;bottom:24px;right:24px;width:56px;height:56px;" +
     "border-radius:50%;background:#7c3aed;border:none;font-size:1.5rem;" +
@@ -294,8 +384,8 @@ async function showModal() {
             <div>
               <div style="color:#e0e0ff;font-weight:500;">Show floating 🙈 button</div>
               <div style="color:#a5a5d0;font-size:0.85rem;margin-top:4px;">
-                When disabled, open Tag Hider from the "Tag Hider" button
-                in the Tags page toolbar instead.
+                When disabled, use the "Tag Hider" button in the Tags page toolbar,
+                or go to Settings → Plugins → Global Tag Hider to re-enable it.
               </div>
             </div>
           </label>
@@ -329,16 +419,17 @@ async function showModal() {
     replaceWithStraight = e.target.checked;
     savePreferences();
     applyHiding();
+    // Sync settings panel if open
+    const s = document.getElementById("gth-s-replace");
+    if (s) s.checked = replaceWithStraight;
   };
 
   document.getElementById("gth-fab-toggle").onchange = e => {
     showFAB = e.target.checked;
     savePreferences();
-    if (showFAB) {
-      injectFAB();
-    } else {
-      document.getElementById("gth-fab")?.remove();
-    }
+    if (showFAB) { injectFAB(); } else { document.getElementById("gth-fab")?.remove(); }
+    const s = document.getElementById("gth-s-fab");
+    if (s) s.checked = showFAB;
   };
 
   const allTags = [...allTagsMap.entries()]
@@ -357,7 +448,7 @@ async function showModal() {
       .filter(t => !hiddenTagIds.has(t.id) && t.name.toLowerCase().includes(lower))
       .forEach(tag => {
         const div = document.createElement("div");
-        div.className = "gth-list-item";
+        div.className   = "gth-list-item";
         div.textContent = `☐ ${tag.name}`;
         div.onclick = () => {
           hiddenTagIds.add(tag.id);
@@ -414,14 +505,20 @@ async function showModal() {
   };
 }
 
-// ---- Init ----
+// ---- Navigation ----
 
 function onNavigation() {
+  // Remove stale injections so they get re-injected fresh on the new page
+  document.getElementById("gth-tags-btn")?.remove();
+  document.getElementById("gth-settings-panel")?.remove();
   setTimeout(() => {
     applyHiding();
     injectTagsPageButton();
+    injectSettingsPanel();
   }, 500);
 }
+
+// ---- Init ----
 
 async function init() {
   console.log("[GlobalTagHider] Starting...");
@@ -435,9 +532,10 @@ async function init() {
 
   injectFAB();
   injectTagsPageButton();
+  injectSettingsPanel();
 
   if (hideObserver) hideObserver.disconnect();
-  hideObserver = new MutationObserver(scheduleHiding);
+  hideObserver = new MutationObserver(onDOMChange);
   hideObserver.observe(document.body, { childList: true, subtree: true });
 
   if (window.PluginApi?.Event) {
@@ -450,7 +548,6 @@ async function init() {
 }
 
 // ---- Bootstrap ----
-// Stash loads plugin scripts after the app is initialized — call init() directly.
 
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", init);
