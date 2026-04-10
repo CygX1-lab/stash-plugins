@@ -2,43 +2,36 @@
 // Global Tag Hider - Gay Edition
 // =============================================
 
-const STORAGE_KEY          = "gth_hiddenTagIds";
-const DEFAULTS_APPLIED_KEY = "gth_defaultsApplied";
-const REPLACE_KEY          = "gth_replaceWithStraight";
-const SHOW_FAB_KEY         = "gth_showFAB";
+const STORAGE_KEY               = "gth_hiddenTagIds";
+const DEFAULTS_APPLIED_KEY      = "gth_defaultsApplied";
+const REPLACE_KEY               = "gth_replaceWithStraight";
+const SHOW_FAB_KEY              = "gth_showFAB";
+const HIDE_FEMALE_PERFORMERS_KEY = "gth_hideFemalePerformers";
 
-let hiddenTagIds        = new Set(); // string IDs
-let allTagsMap          = new Map(); // id (string) -> name
-let tagNameToId         = new Map(); // lowercase name -> id (string)
-let replaceWithStraight = false;
-let showFAB             = true;
-let hideObserver        = null;
+let hiddenTagIds          = new Set();
+let femalePerformerIds    = new Set();
+let allTagsMap            = new Map();
+let tagNameToId           = new Map();
+let replaceWithStraight   = false;
+let showFAB               = true;
+let hideFemalePerformers  = false;
+let hideObserver          = null;
 
-// Default tags to hide on first run (case-insensitive matching against your Stash tags)
 const DEFAULT_HIDDEN_TAGS = [
-  // Tits
   "Tits", "Big Tits", "Small Tits", "Natural Tits", "Fake Tits", "Huge Tits", "Medium Tits",
   "Cum on Tits", "Tit Worship", "Titjob", "Titty Fuck",
-  // Boobs / chest
   "Boobs", "Cleavage",
-  // Pussy variants
   "Pussy", "Wet Pussy", "Shaved Pussy", "Hairy Pussy", "Hairless Pussy", "Trimmed Pussy",
   "Innie Pussy", "Outie Pussy", "Cum on Pussy",
   "Pussy Licking", "Pussy Fingering", "Pussy Rubbing", "Pussy Gape", "Cunnilingus",
-  // Cowgirl positions
   "Cowgirl", "Reverse Cowgirl", "Anal Cowgirl", "Anal Reverse Cowgirl",
-  // Lesbian / female-focused
   "Lesbian", "Lesbian Kissing", "Girl on Girl",
   "FF", "Female Masturbation", "Squirt", "Tribbing", "Scissoring", "Strap-on",
-  // Female archetypes / misc
   "MILF", "Young Girl", "Schoolgirl", "Teen Girl (18\u201322)",
   "Girlfriend", "Other Person's Girlfriend", "For Girls",
-  // Female age ranges
   "Young Woman (22-30)", "Young Woman (22\u201330)", "Woman 30-39",
-  // Female physical descriptors
   "Short Woman", "Average Height Woman", "Tall Woman",
   "White Woman", "Latin Woman", "Latina Woman", "Athletic Woman",
-  // Female clothing / accessories
   "Woman's Heels",
 ];
 
@@ -48,27 +41,25 @@ function loadHiddenTags() {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
     hiddenTagIds = new Set(stored ? JSON.parse(stored) : []);
-  } catch (e) {
-    hiddenTagIds = new Set();
-  }
+  } catch (e) { hiddenTagIds = new Set(); }
 }
 
 function saveHiddenTags() {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify([...hiddenTagIds]));
-  } catch (e) {
-    console.error("[GlobalTagHider] Save failed:", e);
-  }
+  } catch (e) { console.error("[GlobalTagHider] Save failed:", e); }
 }
 
 function loadPreferences() {
-  replaceWithStraight = localStorage.getItem(REPLACE_KEY) === "true";
-  showFAB             = localStorage.getItem(SHOW_FAB_KEY) !== "false";
+  replaceWithStraight  = localStorage.getItem(REPLACE_KEY)                === "true";
+  showFAB              = localStorage.getItem(SHOW_FAB_KEY)               !== "false";
+  hideFemalePerformers = localStorage.getItem(HIDE_FEMALE_PERFORMERS_KEY) === "true";
 }
 
 function savePreferences() {
-  localStorage.setItem(REPLACE_KEY,  String(replaceWithStraight));
-  localStorage.setItem(SHOW_FAB_KEY, String(showFAB));
+  localStorage.setItem(REPLACE_KEY,                String(replaceWithStraight));
+  localStorage.setItem(SHOW_FAB_KEY,               String(showFAB));
+  localStorage.setItem(HIDE_FEMALE_PERFORMERS_KEY, String(hideFemalePerformers));
 }
 
 // ---- GraphQL ----
@@ -85,9 +76,7 @@ async function callGQL(query, variables = {}) {
 async function loadAllTags() {
   const result = await callGQL(`
     query FindAllTags {
-      findTags(filter: { per_page: -1 }) {
-        tags { id name }
-      }
+      findTags(filter: { per_page: -1 }) { tags { id name } }
     }
   `);
   const tags = result.data?.findTags?.tags || [];
@@ -96,28 +85,37 @@ async function loadAllTags() {
   return tags;
 }
 
+async function loadFemalePerformers() {
+  if (!hideFemalePerformers) return;
+  const result = await callGQL(`
+    query FindFemalePerformers {
+      findPerformers(
+        performer_filter: { gender: { value: FEMALE, modifier: EQUALS } }
+        filter: { per_page: -1 }
+      ) { performers { id } }
+    }
+  `);
+  const performers = result.data?.findPerformers?.performers || [];
+  femalePerformerIds = new Set(performers.map(p => String(p.id)));
+  console.log(`[GlobalTagHider] Loaded ${femalePerformerIds.size} female performers`);
+}
+
 // ---- Defaults ----
 
 async function ensureDefaults() {
   const flagSet = localStorage.getItem(DEFAULTS_APPLIED_KEY) === "true";
   if (flagSet && hiddenTagIds.size > 0) return;
-
   if (allTagsMap.size === 0) await loadAllTags();
-
   let added = 0;
   for (const name of DEFAULT_HIDDEN_TAGS) {
     const id = tagNameToId.get(name.toLowerCase());
     if (id && !hiddenTagIds.has(id)) { hiddenTagIds.add(id); added++; }
   }
-
-  if (added > 0) {
-    saveHiddenTags();
-    console.log(`[GlobalTagHider] Applied defaults: hid ${added} tags`);
-  }
+  if (added > 0) { saveHiddenTags(); console.log(`[GlobalTagHider] Applied defaults: hid ${added} tags`); }
   localStorage.setItem(DEFAULTS_APPLIED_KEY, "true");
 }
 
-// ---- Hiding / Replacing ----
+// ---- Hiding ----
 
 function getHiddenTagNames() {
   const names = new Set();
@@ -128,18 +126,33 @@ function getHiddenTagNames() {
   return names;
 }
 
+// Walk up from an element to find a card-sized container
+function findContainer(el, maxLevels = 6) {
+  let node = el.parentElement;
+  for (let i = 0; i < maxLevels; i++) {
+    if (!node || node === document.body) break;
+    if (node.offsetHeight > 60 && node.offsetWidth > 60) return node;
+    node = node.parentElement;
+  }
+  return el;
+}
+
 function applyHiding() {
-  if (hiddenTagIds.size === 0) return;
+  if (hiddenTagIds.size === 0 && femalePerformerIds.size === 0) return;
   const hiddenNames = getHiddenTagNames();
 
-  // Tag cards on /tags page — matched by ID extracted from href
+  // --- Tag cards (matched by tag ID in href) ---
   let straightCardDone = false;
   document.querySelectorAll('a[href*="/tags/"]').forEach(link => {
     const match = link.getAttribute("href").match(/\/tags\/(\d+)/);
     if (!match || !hiddenTagIds.has(match[1])) return;
-    const container = link.closest(".card, .tag-card, li, [class*='col-']") || link;
+    const container =
+      link.closest(".card, .tag-card, li, [class*='col']") || findContainer(link);
+
     if (replaceWithStraight && !straightCardDone) {
-      const heading = container.querySelector("h5, h4, h3, .card-section-title");
+      const heading = container.querySelector(
+        "h5, h4, h3, h2, [class*='title'], [class*='Title']"
+      );
       if (heading && heading.textContent !== "Straight") heading.textContent = "Straight";
       container.style.display = "";
       straightCardDone = true;
@@ -148,29 +161,36 @@ function applyHiding() {
     }
   });
 
-  // react-select dropdown options — matched by name text
+  // --- Female performer cards / links (everywhere) ---
+  if (hideFemalePerformers && femalePerformerIds.size > 0) {
+    document.querySelectorAll('a[href*="/performers/"]').forEach(link => {
+      const match = link.getAttribute("href").match(/\/performers\/(\d+)/);
+      if (!match || !femalePerformerIds.has(match[1])) return;
+      const container =
+        link.closest(".card, .performer-card, li, [class*='col'], [class*='performer']")
+        || findContainer(link);
+      container.style.display = "none";
+    });
+  }
+
+  // --- react-select dropdown options ---
   let straightOptionDone = false;
   document.querySelectorAll(".react-select__option").forEach(el => {
     if (!hiddenNames.has(el.textContent.trim().toLowerCase())) return;
     if (replaceWithStraight && !straightOptionDone) {
       if (el.textContent.trim() !== "Straight") el.textContent = "Straight";
-      el.style.display = "";
-      straightOptionDone = true;
-    } else {
-      el.style.display = "none";
-    }
+      el.style.display = ""; straightOptionDone = true;
+    } else { el.style.display = "none"; }
   });
 
-  // Selected tag chips in multi-selects
+  // --- Selected tag chips ---
   document.querySelectorAll(".react-select__multi-value").forEach(el => {
     const label = el.querySelector(".react-select__multi-value__label");
     if (!label || !hiddenNames.has(label.textContent.trim().toLowerCase())) return;
     if (replaceWithStraight) {
       if (label.textContent !== "Straight") label.textContent = "Straight";
       el.style.display = "";
-    } else {
-      el.style.display = "none";
-    }
+    } else { el.style.display = "none"; }
   });
 }
 
@@ -195,65 +215,117 @@ function isTagsPage() {
   return /\/(#\/)?tags(\/|$|\?)/.test(path);
 }
 
+function makeToolbarBtn() {
+  const btn = document.createElement("button");
+  btn.id = "gth-tags-btn";
+  btn.className = "btn btn-secondary btn-sm";
+  btn.style.marginLeft = "8px";
+  btn.textContent = "Tag Hider";
+  btn.title = "Global Tag Hider — manage hidden tags";
+  btn.onclick = showModal;
+  return btn;
+}
+
 function injectTagsPageButton() {
   if (!isTagsPage() || document.getElementById("gth-tags-btn")) return;
 
-  const toolbar =
+  // Strategy 1: Known Stash class-based selectors
+  const classBased =
     document.querySelector(".NarrowFilterBar .ml-auto") ||
-    document.querySelector(".filter-toolbar .ml-auto")  ||
     document.querySelector("[class*='FilterBar'] .ml-auto") ||
-    document.querySelector(".NarrowFilterBar")           ||
+    document.querySelector("[class*='filter-bar'] .ml-auto") ||
+    document.querySelector(".NarrowFilterBar") ||
     document.querySelector("[class*='FilterBar']");
 
-  if (!toolbar) return;
+  if (classBased) { classBased.appendChild(makeToolbarBtn()); return; }
 
-  const btn = document.createElement("button");
-  btn.id          = "gth-tags-btn";
-  btn.className   = "btn btn-secondary";
-  btn.style.marginLeft = "8px";
-  btn.textContent = "Tag Hider";
-  btn.title       = "Global Tag Hider — manage hidden tags";
-  btn.onclick     = showModal;
-  toolbar.appendChild(btn);
+  // Strategy 2: Near other .btn buttons inside <main>
+  const mainEl = document.querySelector("main");
+  if (mainEl) {
+    const btns = mainEl.querySelectorAll("button.btn");
+    if (btns.length > 0) {
+      const parent = btns[btns.length - 1].closest("div, nav, header")
+        || btns[btns.length - 1].parentElement;
+      if (parent && !parent.querySelector("#gth-tags-btn")) {
+        parent.appendChild(makeToolbarBtn()); return;
+      }
+    }
+  }
+
+  // Strategy 3: Before the first tag card grid
+  const firstCard = document.querySelector(".card, [class*='Card']");
+  if (firstCard) {
+    const wrapper = document.createElement("div");
+    wrapper.style.cssText = "display:flex;justify-content:flex-end;padding:4px 8px 8px;";
+    wrapper.appendChild(makeToolbarBtn());
+    firstCard.parentElement?.parentElement?.insertBefore(wrapper, firstCard.parentElement);
+    return;
+  }
+
+  // Strategy 4: Top of <main>
+  if (mainEl) {
+    const wrapper = document.createElement("div");
+    wrapper.style.cssText = "display:flex;justify-content:flex-end;padding:8px;";
+    wrapper.appendChild(makeToolbarBtn());
+    mainEl.insertBefore(wrapper, mainEl.firstChild);
+    return;
+  }
+
+  console.warn("[GlobalTagHider] Could not find an injection point on the Tags page");
 }
 
 // ---- Settings page panel ----
-// Injected into Settings → Plugins so preferences are reachable even when
-// the floating button is disabled.
 
 function isSettingsPage() {
   const url = window.location.pathname + window.location.search + window.location.hash;
-  return url.includes("settings");
+  return url.toLowerCase().includes("settings");
 }
 
 function findPluginCard() {
-  // Walk all headings / titles looking for our plugin name
-  const candidates = document.querySelectorAll(
-    "h3, h4, h5, h6, .card-title, [class*='title'], strong, b"
-  );
-  for (const el of candidates) {
-    if (el.textContent.trim().startsWith("Global Tag Hider")) {
-      return el.closest(".card, [class*='card'], section, article, li") || el.parentElement;
+  // TreeWalker scans all text nodes — works regardless of class name hashing
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  let node;
+  while ((node = walker.nextNode())) {
+    if (!node.textContent.trim().startsWith("Global Tag Hider")) continue;
+
+    let el = node.parentElement;
+    while (el && el !== document.body) {
+      const tag = el.tagName.toLowerCase();
+      const cls = (el.className || "").toLowerCase();
+      if (
+        tag === "li" || tag === "article" || tag === "section" ||
+        cls.includes("card") || cls.includes("package") ||
+        cls.includes("plugin") || cls.includes("panel")
+      ) return el;
+      // A full-width, tall-enough div is likely the plugin row
+      const rect = el.getBoundingClientRect();
+      if (tag === "div" && rect.width > window.innerWidth * 0.4 && rect.height > 50)
+        return el;
+      el = el.parentElement;
     }
+    // Fallback: 4 levels up from the text node
+    let fallback = node.parentElement;
+    for (let i = 0; i < 4; i++) {
+      if (fallback?.parentElement && fallback.parentElement !== document.body)
+        fallback = fallback.parentElement;
+    }
+    return fallback;
   }
   return null;
-}
-
-function applySettingsToggle(id, key, onEnable, onDisable) {
-  const el = document.getElementById(id);
-  if (!el) return;
-  el.onchange = e => {
-    if (e.target.checked) { onEnable(); } else { onDisable(); }
-    savePreferences();
-    applyHiding();
-  };
 }
 
 function injectSettingsPanel() {
   if (!isSettingsPage() || document.getElementById("gth-settings-panel")) return;
 
   const card = findPluginCard();
-  if (!card) return;
+  if (!card) {
+    if (!injectSettingsPanel._warned) {
+      console.warn("[GlobalTagHider] Plugin card not found on settings page");
+      injectSettingsPanel._warned = true;
+    }
+    return;
+  }
+  injectSettingsPanel._warned = false;
 
   const panel = document.createElement("div");
   panel.id = "gth-settings-panel";
@@ -264,7 +336,7 @@ function injectSettingsPanel() {
   panel.innerHTML = `
     <div style="font-weight:600;color:#c4b5fd;margin-bottom:14px;">⚙️ Tag Hider Settings</div>
 
-    <div style="margin-bottom:14px;">
+    <div style="margin-bottom:12px;">
       <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;">
         <input type="checkbox" id="gth-s-replace"
           style="margin-top:3px;width:15px;height:15px;cursor:pointer;"
@@ -272,7 +344,21 @@ function injectSettingsPanel() {
         <div>
           <div style="color:#e0e0ff;font-weight:500;">Replace hidden tags with "Straight"</div>
           <div style="color:#888;font-size:0.82rem;margin-top:3px;">
-            Instead of hiding, female tags appear as "Straight" — useful for filtering straight scenes.
+            Instead of hiding, female tags appear as "Straight".
+          </div>
+        </div>
+      </label>
+    </div>
+
+    <div style="margin-bottom:12px;">
+      <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;">
+        <input type="checkbox" id="gth-s-female-performers"
+          style="margin-top:3px;width:15px;height:15px;cursor:pointer;"
+          ${hideFemalePerformers ? "checked" : ""}>
+        <div>
+          <div style="color:#e0e0ff;font-weight:500;">Hide female performers everywhere</div>
+          <div style="color:#888;font-size:0.82rem;margin-top:3px;">
+            Hides performer cards, thumbnails and links for performers with gender set to Female.
           </div>
         </div>
       </label>
@@ -292,32 +378,27 @@ function injectSettingsPanel() {
       </label>
     </div>
 
-    <button id="gth-s-open" class="btn btn-primary btn-sm">
-      Open Tag Hider
-    </button>
+    <button id="gth-s-open" class="btn btn-primary btn-sm">Open Tag Hider</button>
   `;
 
   card.appendChild(panel);
 
-  // Wire toggles
-  applySettingsToggle(
-    "gth-s-replace",
-    REPLACE_KEY,
-    () => { replaceWithStraight = true; },
-    () => { replaceWithStraight = false; }
-  );
-  applySettingsToggle(
-    "gth-s-fab",
-    SHOW_FAB_KEY,
-    () => { showFAB = true;  injectFAB(); },
-    () => { showFAB = false; document.getElementById("gth-fab")?.remove(); }
-  );
-
-  const openBtn = document.getElementById("gth-s-open");
-  if (openBtn) openBtn.onclick = showModal;
+  document.getElementById("gth-s-replace").onchange = e => {
+    replaceWithStraight = e.target.checked; savePreferences(); applyHiding();
+  };
+  document.getElementById("gth-s-female-performers").onchange = async e => {
+    hideFemalePerformers = e.target.checked; savePreferences();
+    if (hideFemalePerformers && femalePerformerIds.size === 0) await loadFemalePerformers();
+    applyHiding();
+  };
+  document.getElementById("gth-s-fab").onchange = e => {
+    showFAB = e.target.checked; savePreferences();
+    if (showFAB) injectFAB(); else document.getElementById("gth-fab")?.remove();
+  };
+  document.getElementById("gth-s-open").onclick = showModal;
 }
 
-// ---- Floating button (FAB) ----
+// ---- FAB ----
 
 function injectFAB() {
   if (!showFAB || document.getElementById("gth-fab")) return;
@@ -336,10 +417,8 @@ function injectFAB() {
 // ---- Modal ----
 
 async function showModal() {
-  loadHiddenTags();
-  loadPreferences();
+  loadHiddenTags(); loadPreferences();
   if (allTagsMap.size === 0) await loadAllTags();
-
   document.getElementById("gth-overlay")?.remove();
 
   const overlay = document.createElement("div");
@@ -371,8 +450,21 @@ async function showModal() {
             <div>
               <div style="color:#e0e0ff;font-weight:500;">Replace hidden tags with "Straight"</div>
               <div style="color:#a5a5d0;font-size:0.85rem;margin-top:4px;">
-                Instead of hiding, female tags appear as "Straight" — makes it easy
-                to spot and filter straight scenes while keeping male performers in focus.
+                Instead of hiding, female tags appear as "Straight" — easy to spot and filter
+                straight scenes while keeping male performers in focus.
+              </div>
+            </div>
+          </label>
+
+          <label style="display:flex;align-items:flex-start;gap:12px;cursor:pointer;margin-top:14px;">
+            <input type="checkbox" id="gth-female-performers-toggle"
+              style="margin-top:3px;width:16px;height:16px;cursor:pointer;"
+              ${hideFemalePerformers ? "checked" : ""}>
+            <div>
+              <div style="color:#e0e0ff;font-weight:500;">Hide female performers everywhere</div>
+              <div style="color:#a5a5d0;font-size:0.85rem;margin-top:4px;">
+                Hides performer cards, thumbnails and links for any performer whose gender
+                is set to Female — on the performers page, scene cards, and scene detail.
               </div>
             </div>
           </label>
@@ -391,8 +483,7 @@ async function showModal() {
           </label>
         </div>
 
-        <input type="text" id="gth-search" class="gth-search"
-               placeholder="🔍 Search tags...">
+        <input type="text" id="gth-search" class="gth-search" placeholder="🔍 Search tags...">
         <button id="gth-apply-defaults" class="gth-default-btn">
           🌈 Apply Gay Defaults (hide common female tags)
         </button>
@@ -416,26 +507,23 @@ async function showModal() {
   document.getElementById("gth-close").onclick = () => overlay.remove();
 
   document.getElementById("gth-replace-toggle").onchange = e => {
-    replaceWithStraight = e.target.checked;
-    savePreferences();
+    replaceWithStraight = e.target.checked; savePreferences(); applyHiding();
+    const s = document.getElementById("gth-s-replace"); if (s) s.checked = replaceWithStraight;
+  };
+  document.getElementById("gth-female-performers-toggle").onchange = async e => {
+    hideFemalePerformers = e.target.checked; savePreferences();
+    if (hideFemalePerformers && femalePerformerIds.size === 0) await loadFemalePerformers();
     applyHiding();
-    // Sync settings panel if open
-    const s = document.getElementById("gth-s-replace");
-    if (s) s.checked = replaceWithStraight;
+    const s = document.getElementById("gth-s-female-performers"); if (s) s.checked = hideFemalePerformers;
   };
-
   document.getElementById("gth-fab-toggle").onchange = e => {
-    showFAB = e.target.checked;
-    savePreferences();
-    if (showFAB) { injectFAB(); } else { document.getElementById("gth-fab")?.remove(); }
-    const s = document.getElementById("gth-s-fab");
-    if (s) s.checked = showFAB;
+    showFAB = e.target.checked; savePreferences();
+    if (showFAB) injectFAB(); else document.getElementById("gth-fab")?.remove();
+    const s = document.getElementById("gth-s-fab"); if (s) s.checked = showFAB;
   };
 
-  const allTags = [...allTagsMap.entries()]
-    .map(([id, name]) => ({ id, name }))
+  const allTags = [...allTagsMap.entries()].map(([id, name]) => ({ id, name }))
     .sort((a, b) => a.name.localeCompare(b.name));
-
   const searchInput = document.getElementById("gth-search");
 
   function renderLists(filter = "") {
@@ -444,35 +532,28 @@ async function showModal() {
 
     const availableList = document.getElementById("gth-available");
     availableList.innerHTML = "";
-    allTags
-      .filter(t => !hiddenTagIds.has(t.id) && t.name.toLowerCase().includes(lower))
+    allTags.filter(t => !hiddenTagIds.has(t.id) && t.name.toLowerCase().includes(lower))
       .forEach(tag => {
         const div = document.createElement("div");
-        div.className   = "gth-list-item";
+        div.className = "gth-list-item";
         div.textContent = `☐ ${tag.name}`;
         div.onclick = () => {
-          hiddenTagIds.add(tag.id);
-          saveHiddenTags();
-          renderLists(searchInput.value);
-          applyHiding();
+          hiddenTagIds.add(tag.id); saveHiddenTags();
+          renderLists(searchInput.value); applyHiding();
         };
         availableList.appendChild(div);
       });
 
     const hiddenList = document.getElementById("gth-hidden-list");
     hiddenList.innerHTML = "";
-    allTags
-      .filter(t => hiddenTagIds.has(t.id) && t.name.toLowerCase().includes(lower))
+    allTags.filter(t => hiddenTagIds.has(t.id) && t.name.toLowerCase().includes(lower))
       .forEach(tag => {
         const div = document.createElement("div");
         div.className = "gth-list-item gth-hidden-item";
         div.innerHTML = `<span>${tag.name}</span><button class="gth-unhide-btn">Unhide</button>`;
         div.querySelector("button").onclick = e => {
-          e.stopPropagation();
-          hiddenTagIds.delete(tag.id);
-          saveHiddenTags();
-          renderLists(searchInput.value);
-          applyHiding();
+          e.stopPropagation(); hiddenTagIds.delete(tag.id); saveHiddenTags();
+          renderLists(searchInput.value); applyHiding();
         };
         hiddenList.appendChild(div);
       });
@@ -482,53 +563,42 @@ async function showModal() {
   searchInput.addEventListener("input", () => renderLists(searchInput.value));
 
   document.getElementById("gth-apply-defaults").onclick = async () => {
-    if (!confirm("Apply Gay Defaults?\nThis will hide common female tags. Your manually hidden tags will remain.")) return;
+    if (!confirm("Apply Gay Defaults?\nThis will hide common female tags. Manually hidden tags will remain.")) return;
     let added = 0;
     for (const name of DEFAULT_HIDDEN_TAGS) {
       const id = tagNameToId.get(name.toLowerCase());
       if (id && !hiddenTagIds.has(id)) { hiddenTagIds.add(id); added++; }
     }
-    saveHiddenTags();
-    applyHiding();
-    renderLists(searchInput.value);
-    alert(added > 0
-      ? `Added ${added} default tags to the hidden list.`
+    saveHiddenTags(); applyHiding(); renderLists(searchInput.value);
+    alert(added > 0 ? `Added ${added} default tags to the hidden list.`
       : "All default tags were already hidden (or not found in your Stash).");
   };
 
   document.getElementById("gth-unhide-all").onclick = () => {
     if (!confirm("Unhide ALL hidden tags?")) return;
-    hiddenTagIds.clear();
-    saveHiddenTags();
-    renderLists(searchInput.value);
-    applyHiding();
+    hiddenTagIds.clear(); saveHiddenTags(); renderLists(searchInput.value); applyHiding();
   };
 }
 
 // ---- Navigation ----
 
 function onNavigation() {
-  // Remove stale injections so they get re-injected fresh on the new page
   document.getElementById("gth-tags-btn")?.remove();
   document.getElementById("gth-settings-panel")?.remove();
-  setTimeout(() => {
-    applyHiding();
-    injectTagsPageButton();
-    injectSettingsPanel();
-  }, 500);
+  injectSettingsPanel._warned = false;
+  setTimeout(() => { applyHiding(); injectTagsPageButton(); injectSettingsPanel(); }, 600);
 }
 
 // ---- Init ----
 
 async function init() {
   console.log("[GlobalTagHider] Starting...");
-  loadHiddenTags();
-  loadPreferences();
+  loadHiddenTags(); loadPreferences();
 
-  loadAllTags().then(async () => {
-    await ensureDefaults();
-    applyHiding();
-  });
+  const tagsPromise = loadAllTags().then(async () => { await ensureDefaults(); });
+  const perfPromise = hideFemalePerformers ? loadFemalePerformers() : Promise.resolve();
+
+  Promise.all([tagsPromise, perfPromise]).then(() => applyHiding());
 
   injectFAB();
   injectTagsPageButton();
