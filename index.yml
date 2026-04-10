@@ -1,7 +1,4 @@
-name: CygX1 Plugins
-plugins:
-  - id: global-tag-hider
-    name: Global Tag Hider - Gay Edition
-    description: Hide any tags globally from dropdowns and lists (with beautiful modal). Automatically hides common female tags on first activation. Perfect for male/gay-only Stash setups.
-    version: 1.0.0
-    url: https://raw.githubusercontent.com/CygX1-lab/stash-plugins/main/global-tag-hider.yml
+- name: Global Tag Hider - Gay Edition
+  description: Hide any tags globally from dropdowns and lists (with beautiful modal). Automatically hides common female tags on first activation. Perfect for male/gay-only Stash setups.
+  version: 1.0.0
+  url: https://raw.githubusercontent.com/CygX1-lab/stash-plugins/main/global-tag-hider.yml
