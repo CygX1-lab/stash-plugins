@@ -182,20 +182,20 @@ function applyHiding() {
   }
 
   // Per-applyHiding() set that tracks which "groups" have already received a
-  // replacement label.  Used only for inline-badge contexts (scene detail etc.)
+  // replacement label.  Used for inline-badge contexts (scene detail etc.)
   // so that multiple hidden tags in the same row collapse into one label.
-  // Tag-card contexts (Tags list page) are NOT deduplicated — each card shows
-  // its own replacement label independently.
   const replacedGroups = new Set();
+  // Tag-card context (Tags list page): only ONE replacement card must be visible.
+  // All subsequent hidden-tag cards are hidden so the user sees a single tile.
+  let replacementCardShown = false;
 
   function processTagLink(link, container) {
     if (replaceWithStraight) {
       // Determine context:
       //   • "inline badge" — container is the link itself or a small badge wrapper
-      //     (scene detail tags row).  Deduplicate: first hidden tag in the row
-      //     shows the replacement label; subsequent ones are hidden.
-      //   • "card" — container is a standalone tag card (Tags list page).
-      //     No deduplication — every card shows its own replacement label.
+      //     (scene detail tags row).  Deduplicate per group.
+      //   • "card" — standalone tag card (Tags list page).
+      //     Show exactly ONE replacement card; hide all others.
       const isInlineBadge = container === link ||
         !!(container.matches && container.matches(
           ".badge, [class*='tag-item'], [class*='TagLink'], [class*='tag-link']"
@@ -219,6 +219,13 @@ function applyHiding() {
             ancestorCard.style.display = "";
           }
         }
+      } else {
+        // Tag-card context: only the first hidden card becomes the replacement tile.
+        if (replacementCardShown) {
+          container.style.display = "none";
+          return;
+        }
+        replacementCardShown = true;
       }
 
       const t = textTarget(link, container);
@@ -1096,21 +1103,25 @@ function installFetchInterceptor() {
       }
     }
 
-    // Must be a findTags query with a text search term.
-    // Accept two variable paths:
-    //   filter.q          — scene-tag dropdown (react-select autocomplete)
-    //   tagFilter.name.value — Tags navigation page search bar
-    // Non-search findTags (loadAllTags, sort/pagination without a term) must
-    // pass through completely unmodified — body not consumed, all headers intact.
-    const filterQ       = body?.variables?.filter?.q?.trim();
-    const tagFilterName = body?.variables?.tagFilter?.name?.value?.trim();
-    const searchTerm    = filterQ || tagFilterName;
-
-    if (!/\bfindTags\b/.test(body?.query ?? "") || !searchTerm) {
+    // Must be a findTags query.
+    // Pass through our own full-load (loadAllTags uses per_page: -1) completely
+    // unmodified — body not consumed, all headers intact.
+    // All other findTags (browse pagination AND text search) are intercepted so
+    // hidden tags are removed and exactly ONE replacement card is injected.
+    if (!/\bfindTags\b/.test(body?.query ?? "")) {
+      return origFetch.apply(this, arguments);
+    }
+    if ((body?.variables?.filter?.per_page ?? 0) === -1) {
       return origFetch.apply(this, arguments);
     }
 
-    // From here we know this is a user-typed tag search.
+    // Capture the search term (only present for text-search queries, not browse).
+    const filterQ       = body?.variables?.filter?.q?.trim();
+    const tagFilterName = body?.variables?.tagFilter?.name?.value?.trim()
+                       || body?.variables?.tag_filter?.name?.value?.trim();
+    const searchTerm    = filterQ || tagFilterName;
+
+    // From here: both browse (no searchTerm) and search (has searchTerm).
     const resp = await origFetch.apply(this, arguments);
     let json;
     try { json = await resp.json(); }
@@ -1141,9 +1152,10 @@ function installFetchInterceptor() {
       if (!visible.some(t => t.name === replacementTagName)) {
         visible.push(makeReplacement(hidden[0]));
       }
-    } else {
-      // User is typing the replacement label — inject from cache when any word prefix matches.
-      // Word-boundary matching ("Stud" finds "Straight Studs Fucking"; pure startsWith would miss).
+    } else if (searchTerm) {
+      // No hidden tags in results but user typed something — inject from cache
+      // when the search term is a word-prefix of any word in the replacement label.
+      // Word-boundary matching: "Stud" → "Studs" ✓, "Fuck" → "Fucking" ✓.
       const lowerSearch = searchTerm.toLowerCase();
       const words = replacementTagName.toLowerCase().split(/\s+/);
       const wordPrefixMatch = lowerSearch.length >= 2 &&
@@ -1156,6 +1168,7 @@ function installFetchInterceptor() {
         visible.push(makeReplacement(_cachedHiddenTagObj));
       }
     }
+    // Browse with no hidden results on this page: nothing to inject.
 
     json.data.findTags.tags = visible;
     // Keep count consistent with the filtered+injected result set.
