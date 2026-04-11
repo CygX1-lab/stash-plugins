@@ -983,14 +983,9 @@ function installFetchInterceptor() {
       return new Response(JSON.stringify(json), { status: resp.status, headers: { "content-type": "application/json" } });
     }
 
-    // Passively cache the first hidden tag object we see in ANY findTags response.
-    // This ensures the cache is warm regardless of search term.
-    if (!_cachedHiddenTagObj) {
-      const firstHidden = tags.find(t => hiddenTagIds.has(String(t.id)));
-      if (firstHidden) _cachedHiddenTagObj = firstHidden;
-    }
-
-    // Filtering and injection only apply to search-term queries
+    // Only filtering and injection apply to search-term queries.
+    // Non-search findTags (e.g. loadAllTags with only {id,name}) must pass through
+    // unmodified — and must NOT populate the cache, which needs a full field set.
     if (!hasSearchTerm) {
       return new Response(JSON.stringify(json), {
         status: resp.status,
@@ -1003,7 +998,7 @@ function installFetchInterceptor() {
     const hidden  = tags.filter(t =>  hiddenTagIds.has(String(t.id)));
 
     if (hidden.length > 0) {
-      // Update cache with the freshest full object
+      // Cache the full dropdown-field object for later label-prefix injection
       _cachedHiddenTagObj = hidden[0];
       // Inject ONE replacement option (spread full object to preserve all Stash fields)
       if (!visible.some(t => t.name === replacementTagName)) {
