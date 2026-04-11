@@ -18,6 +18,7 @@ let replacementTagName    = "Straight Sex";
 let showFAB               = true;
 let hideFemalePerformers  = false;
 let hideObserver          = null;
+let _cachedHiddenTagObj   = null;
 
 const DEFAULT_HIDDEN_TAGS = [
   "Tits", "Big Tits", "Small Tits", "Natural Tits", "Fake Tits", "Huge Tits", "Medium Tits",
@@ -891,6 +892,35 @@ function onNavigation() {
 // undefined on missing properties.  Selecting it saves the backing tag to the
 // scene; the UI then displays it as the replacement label everywhere.
 
+// ---- Fetch-cache warm-up ----
+//
+// Fetches a full tag object for one of the hidden tags so that the replacement
+// option can be injected even when the user types the replacement label before
+// ever searching for a hidden tag (i.e. before the interceptor has naturally
+// cached a full object).  Uses the same field set as Stash's TagSelect query.
+async function warmFetchCache() {
+  if (_cachedHiddenTagObj) return;                     // already warm
+  if (!replaceWithStraight || hiddenTagIds.size === 0) return;
+
+  const [firstId] = hiddenTagIds;
+  try {
+    // Use findTags filtered by ID — same endpoint, same field set as Stash's dropdown query
+    const result = await callGQL(`
+      query GTHWarmCache($ids: [ID!]) {
+        findTags(tag_filter: { id: { value: $ids, modifier: INCLUDES } }, filter: { per_page: 1 }) {
+          tags { id name aliases image_path scene_count parent_count child_count }
+        }
+      }
+    `, { ids: [firstId] });
+    const tags = result?.data?.findTags?.tags;
+    if (Array.isArray(tags) && tags.length > 0) {
+      _cachedHiddenTagObj = tags[0];
+    }
+  } catch (e) {
+    console.warn("[GlobalTagHider] warmFetchCache failed:", e);
+  }
+}
+
 function installFetchInterceptor() {
   if (window._gthFetchInstalled) return;
   window._gthFetchInstalled = true;
@@ -914,10 +944,12 @@ function installFetchInterceptor() {
     try { body = JSON.parse(typeof options.body === "string" ? options.body : null); }
     catch { return origFetch.apply(this, arguments); }
 
-    // Only intercept findTags queries that include a search term
-    if (!/\bfindTags\b/.test(body?.query ?? "") || !body?.variables?.filter?.q) {
+    // Must be a findTags query
+    if (!/\bfindTags\b/.test(body?.query ?? "")) {
       return origFetch.apply(this, arguments);
     }
+
+    const hasSearchTerm = !!body?.variables?.filter?.q;
 
     const resp = await origFetch.apply(this, arguments);
     let json;
@@ -929,15 +961,43 @@ function installFetchInterceptor() {
       return new Response(JSON.stringify(json), { status: resp.status, headers: { "content-type": "application/json" } });
     }
 
-    // Partition results
-    const visible   = tags.filter(t => !hiddenTagIds.has(String(t.id)));
-    const hidden    = tags.filter(t =>  hiddenTagIds.has(String(t.id)));
+    // Passively cache the first hidden tag object we see in ANY findTags response.
+    // This ensures the cache is warm regardless of search term.
+    if (!_cachedHiddenTagObj) {
+      const firstHidden = tags.find(t => hiddenTagIds.has(String(t.id)));
+      if (firstHidden) _cachedHiddenTagObj = firstHidden;
+    }
 
-    // If any hidden tags were found, inject ONE replacement option.
-    // Spread the full server object so Stash's code never hits undefined
-    // when it accesses fields like image_path, scene_count, etc.
-    if (hidden.length > 0 && !visible.some(t => t.name === replacementTagName)) {
-      visible.push({ ...hidden[0], name: replacementTagName });
+    // Filtering and injection only apply to search-term queries
+    if (!hasSearchTerm) {
+      return new Response(JSON.stringify(json), {
+        status: resp.status,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    // Partition results
+    const visible = tags.filter(t => !hiddenTagIds.has(String(t.id)));
+    const hidden  = tags.filter(t =>  hiddenTagIds.has(String(t.id)));
+
+    if (hidden.length > 0) {
+      // Update cache with the freshest full object
+      _cachedHiddenTagObj = hidden[0];
+      // Inject ONE replacement option (spread full object to preserve all Stash fields)
+      if (!visible.some(t => t.name === replacementTagName)) {
+        visible.push({ ...hidden[0], name: replacementTagName });
+      }
+    } else {
+      // User is typing the replacement label — inject from cache if prefix matches
+      const lowerSearch = body.variables.filter.q.trim().toLowerCase();
+      if (
+        lowerSearch.length >= 2 &&
+        replacementTagName.toLowerCase().startsWith(lowerSearch) &&
+        _cachedHiddenTagObj &&
+        !visible.some(t => t.name === replacementTagName)
+      ) {
+        visible.push({ ..._cachedHiddenTagObj, name: replacementTagName });
+      }
     }
 
     json.data.findTags.tags = visible;
@@ -963,6 +1023,9 @@ async function init() {
 
   const tagsPromise = loadAllTags().then(async () => { await ensureDefaults(); });
   const perfPromise = hideFemalePerformers ? loadFemalePerformers() : Promise.resolve();
+
+  // Pre-warm the fetch cache so the replacement label is searchable immediately
+  tagsPromise.then(() => warmFetchCache());
 
   Promise.all([tagsPromise, perfPromise]).then(() => applyHiding());
 
