@@ -23,7 +23,7 @@ const DEFAULT_HIDDEN_TAGS = [
   "Tits", "Big Tits", "Small Tits", "Natural Tits", "Fake Tits", "Huge Tits", "Medium Tits",
   "Cum on Tits", "Tit Worship", "Titjob", "Titty Fuck",
   "Boobs", "Fake Boobs", "Medium Boobs", "Cleavage",
-  "Pussy", "Wet Pussy", "Shaved Pussy", "Hairy Pussy", "Hairless Pussy", "Trimmed Pussy",
+  "Pussy", "Wet Pussy", "Shaved Pussy", "Trimmed Pussy",
   "Innie Pussy", "Outie Pussy", "Cum on Pussy",
   "Pussy Licking", "Pussy Fingering", "Pussy Rubbing", "Pussy Gape", "Cunnilingus",
   "Cowgirl", "Reverse Cowgirl", "Anal Cowgirl", "Anal Reverse Cowgirl",
@@ -315,6 +315,10 @@ function applyHiding() {
   });
 
   // --- Selected tag chips ---
+  // Same dedup pattern as dropdown options: only the first hidden chip is shown
+  // as the replacement label; subsequent hidden chips are hidden entirely.
+  // When the user removes the visible chip, the next hidden one becomes visible.
+  let replacedChipDone = false;
   document.querySelectorAll(".react-select__multi-value").forEach(el => {
     const label = el.querySelector(".react-select__multi-value__label");
     if (!label) return;
@@ -322,8 +326,13 @@ function applyHiding() {
     if (!hiddenNames.has(origText.toLowerCase())) return;
     if (!label.dataset.gthOrigText) label.dataset.gthOrigText = label.textContent.trim();
     if (replaceWithStraight) {
-      if (label.textContent !== replacementTagName) label.textContent = replacementTagName;
-      el.style.display = "";
+      if (replacedChipDone) {
+        el.style.display = "none";
+      } else {
+        if (label.textContent !== replacementTagName) label.textContent = replacementTagName;
+        el.style.display = "";
+        replacedChipDone = true;
+      }
     } else { el.style.display = "none"; }
   });
 }
@@ -869,11 +878,92 @@ function onNavigation() {
   setTimeout(() => { applyHiding(); injectTagsPageButton(); injectSettingsPanel(); }, 600);
 }
 
+// ---- GraphQL fetch interceptor ----
+//
+// Intercepts Stash's tag-search GraphQL requests so that hidden tags are
+// removed at the data level and ONE replacement option is injected in their
+// place.  This means:
+//   • Typing "Pussy" in the tags dropdown  → ONE "Straight Studs Fucking" option
+//   • Typing "Straight Studs Fucking"      → the replacement option is found
+//   • No hidden tags leak through into the search results
+//
+// The replacement option is backed by the first hidden tag's real ID so that
+// selecting it actually saves a tag to the scene.  The saved tag is hidden in
+// the UI and shown as the replacement label everywhere.
+
+function installFetchInterceptor() {
+  if (window._gthFetchInstalled) return;
+  window._gthFetchInstalled = true;
+
+  const origFetch = window.fetch;
+  window.fetch = async function(resource, options) {
+    // Fast-path: not a GraphQL POST
+    const url = typeof resource === "string" ? resource
+      : (resource instanceof Request ? resource.url : "");
+    if (!url.includes("/graphql") || !options?.body) {
+      return origFetch.apply(this, arguments);
+    }
+
+    // Only intercept when replace-mode is on and there are hidden tags
+    if (!replaceWithStraight || hiddenTagIds.size === 0) {
+      return origFetch.apply(this, arguments);
+    }
+
+    // Parse the request body
+    let body;
+    try { body = JSON.parse(typeof options.body === "string" ? options.body : null); }
+    catch { return origFetch.apply(this, arguments); }
+
+    // Only intercept findTags queries that include a search term
+    if (!/\bfindTags\b/.test(body?.query ?? "") || !body?.variables?.filter?.q) {
+      return origFetch.apply(this, arguments);
+    }
+
+    const resp = await origFetch.apply(this, arguments);
+    let json;
+    try { json = await resp.json(); }
+    catch { return resp; }
+
+    const tags = json?.data?.findTags?.tags;
+    if (!Array.isArray(tags)) {
+      return new Response(JSON.stringify(json), { status: resp.status, headers: { "content-type": "application/json" } });
+    }
+
+    // Partition results
+    const visible   = tags.filter(t => !hiddenTagIds.has(String(t.id)));
+    const hidden    = tags.filter(t =>  hiddenTagIds.has(String(t.id)));
+
+    // Also inject when the user is typing the replacement label itself
+    // (server returns nothing for it since it's not a real tag name)
+    const lowerSearch  = body.variables.filter.q.trim().toLowerCase();
+    const lowerReplace = replacementTagName.toLowerCase();
+    const typingLabel  = lowerSearch.length >= 2 && lowerReplace.startsWith(lowerSearch);
+
+    if (hidden.length > 0 || typingLabel) {
+      // Back the synthetic option with the first found hidden tag (or any known
+      // hidden tag ID if the server returned nothing for a label search).
+      const primary = hidden[0] ?? { id: [...hiddenTagIds][0] };
+      // Avoid adding a duplicate if a "Straight Studs Fucking" real tag exists
+      if (primary && !visible.some(t => t.name === replacementTagName)) {
+        visible.push({ id: primary.id, name: replacementTagName, aliases: [] });
+      }
+    }
+
+    json.data.findTags.tags = visible;
+    return new Response(JSON.stringify(json), {
+      status: resp.status,
+      headers: { "content-type": "application/json" },
+    });
+  };
+}
+
 // ---- Init ----
 
 async function init() {
   console.log("[GlobalTagHider] Starting...");
   loadHiddenTags(); loadPreferences();
+
+  installFetchInterceptor();
 
   const tagsPromise = loadAllTags().then(async () => { await ensureDefaults(); });
   const perfPromise = hideFemalePerformers ? loadFemalePerformers() : Promise.resolve();
