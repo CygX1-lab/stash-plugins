@@ -19,6 +19,7 @@ let showFAB               = true;
 let hideFemalePerformers  = false;
 let hideObserver          = null;
 let _cachedHiddenTagObj   = null;
+let _totalHiddenSceneCount = null;  // sum of scenes across ALL hidden tags (from warmFetchCache)
 let _origFetch            = null;   // pre-interceptor fetch, used by warmFetchCache
 
 const DEFAULT_HIDDEN_TAGS = [
@@ -938,62 +939,86 @@ function makeSafeReplacementObj(id) {
 }
 
 async function warmFetchCache() {
-  if (_cachedHiddenTagObj) return;
   if (!replaceWithStraight || hiddenTagIds.size === 0) return;
   if (!_origFetch) return;
 
-  // Build a list of up to 10 hidden tag candidates (those with known names).
-  // We try each in order until we find one with scene_count > 0, so the
-  // replacement label on the Tags page shows a non-zero scene count and is
-  // immediately useful.  The first matched tag (even with 0 scenes) is kept as
-  // a fallback so injection never silently skips.
-  const candidates = [];
-  for (const id of hiddenTagIds) {
-    const n = allTagsMap.get(String(id));
-    if (n) { candidates.push({ id, name: n }); }
-    if (candidates.length >= 10) break;
-  }
-  if (!candidates.length) return;
-
-  const gql = `
-    query GTHWarmCache($q: String) {
-      findTags(filter: { q: $q, per_page: 10 }) {
-        tags {
-          id name aliases image_path
-          scene_count parent_count child_count
-          parents { id name }
-          children { id name }
+  // Phase 1 — find a representative hidden tag object (provides the field shape for
+  // injection — aliases, parents, children, image_path, etc.).  Skipped if already set.
+  // Tries up to 10 candidates and picks the first with scene_count > 0 so that the
+  // replacement card on the Tags page doesn't initially show "0 Scenes".
+  if (!_cachedHiddenTagObj) {
+    const candidates = [];
+    for (const id of hiddenTagIds) {
+      const n = allTagsMap.get(String(id));
+      if (n) { candidates.push({ id, name: n }); }
+      if (candidates.length >= 10) break;
+    }
+    if (candidates.length > 0) {
+      const gql = `
+        query GTHWarmCache($q: String) {
+          findTags(filter: { q: $q, per_page: 10 }) {
+            tags {
+              id name aliases image_path
+              scene_count parent_count child_count
+              parents { id name }
+              children { id name }
+            }
+          }
+        }
+      `;
+      // Use _origFetch to bypass our own interceptor — prevents passive-cache
+      // poisoning with a response that has a different field set.
+      let firstMatch = null;
+      for (const { id: warmId, name: warmName } of candidates) {
+        try {
+          const resp = await _origFetch("/graphql", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ query: gql, variables: { q: warmName } })
+          });
+          const json = await resp.json();
+          const tags = json?.data?.findTags?.tags;
+          if (Array.isArray(tags)) {
+            const match = tags.find(t => hiddenTagIds.has(String(t.id)));
+            if (match) {
+              if (match.scene_count > 0) { _cachedHiddenTagObj = match; break; }
+              if (!firstMatch) firstMatch = match;
+            }
+          }
+        } catch (e) {
+          console.warn("[GlobalTagHider] warmFetchCache attempt failed:", e);
         }
       }
+      if (!_cachedHiddenTagObj) {
+        _cachedHiddenTagObj = firstMatch || makeSafeReplacementObj(candidates[0].id);
+      }
     }
-  `;
+  }
 
-  // Use _origFetch to bypass our own interceptor — prevents passive-cache
-  // poisoning with a response that has a different field set.
-  let firstMatch = null;
-  for (const { id: warmId, name: warmName } of candidates) {
+  // Phase 2 — total scene count across ALL hidden tags combined.  This is what the
+  // replacement tag card shows on the Tags page and what findScenes expansion returns.
+  if (_totalHiddenSceneCount === null) {
     try {
-      const resp = await _origFetch("/graphql", {
+      const idList = [...hiddenTagIds].map(id => `"${String(id)}"`).join(",");
+      const cr = await _origFetch("/graphql", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: gql, variables: { q: warmName } })
+        body: JSON.stringify({
+          query: `query GTHCount {
+            findScenes(
+              scene_filter: { tags: { value: [${idList}], modifier: INCLUDES } }
+              filter: { per_page: 0 }
+            ) { count }
+          }`
+        })
       });
-      const json = await resp.json();
-      const tags = json?.data?.findTags?.tags;
-      if (Array.isArray(tags)) {
-        const match = tags.find(t => hiddenTagIds.has(String(t.id)));
-        if (match) {
-          if (match.scene_count > 0) { _cachedHiddenTagObj = match; return; }
-          if (!firstMatch) firstMatch = match;  // keep as fallback even if 0 scenes
-        }
-      }
+      const cj = await cr.json();
+      const total = cj?.data?.findScenes?.count;
+      if (typeof total === "number") _totalHiddenSceneCount = total;
     } catch (e) {
-      console.warn("[GlobalTagHider] warmFetchCache attempt failed:", e);
+      console.warn("[GlobalTagHider] scene count fetch failed:", e);
     }
   }
-
-  // None of the candidates had scenes — use first matched tag or synthetic fallback
-  _cachedHiddenTagObj = firstMatch || makeSafeReplacementObj(candidates[0].id);
 }
 
 function installFetchInterceptor() {
@@ -1019,6 +1044,30 @@ function installFetchInterceptor() {
     let body;
     try { body = JSON.parse(typeof options.body === "string" ? options.body : null); }
     catch { return origFetch.apply(this, arguments); }
+
+    // --- findScenes: expand a hidden-tag filter to ALL hidden tags ---
+    // When Stash queries scenes for one hidden tag (e.g. the replacement card's ID),
+    // rewrite the filter to include every hidden tag with INCLUDES so the user sees
+    // all "Straight Studs Fucking" scenes, not just the one tag's scenes.
+    // Only rewrite when every ID in the filter is a hidden tag (avoids touching
+    // mixed filters that the user set up themselves with non-hidden tags).
+    if (/\bfindScenes\b/.test(body?.query ?? "")) {
+      const tf = body?.variables?.scene_filter?.tags;
+      if (tf && Array.isArray(tf.value) && tf.value.length > 0 &&
+          tf.value.every(id => hiddenTagIds.has(String(id)))) {
+        const expanded = {
+          ...body,
+          variables: {
+            ...body.variables,
+            scene_filter: {
+              ...body.variables.scene_filter,
+              tags: { value: [...hiddenTagIds], modifier: "INCLUDES" },
+            },
+          },
+        };
+        return origFetch.call(this, resource, { ...options, body: JSON.stringify(expanded) });
+      }
+    }
 
     // Must be a findTags query with a text search term.
     // Accept two variable paths:
@@ -1049,23 +1098,35 @@ function installFetchInterceptor() {
     const visible = tags.filter(t => !hiddenTagIds.has(String(t.id)));
     const hidden  = tags.filter(t =>  hiddenTagIds.has(String(t.id)));
 
+    // Helper: build the replacement object, overriding name and scene_count.
+    // scene_count uses the aggregate total across all hidden tags (if known) so the
+    // card on the Tags page shows the correct combined count rather than one tag's count.
+    const makeReplacement = src => ({
+      ...src,
+      name: replacementTagName,
+      scene_count: _totalHiddenSceneCount ?? src.scene_count,
+    });
+
     if (hidden.length > 0) {
       // Cache the full dropdown-field object for later label-prefix injection
       _cachedHiddenTagObj = hidden[0];
       // Inject ONE replacement option (spread full object to preserve all Stash fields)
       if (!visible.some(t => t.name === replacementTagName)) {
-        visible.push({ ...hidden[0], name: replacementTagName });
+        visible.push(makeReplacement(hidden[0]));
       }
     } else {
-      // User is typing the replacement label — inject from cache if prefix matches
+      // User is typing the replacement label — inject from cache when any word prefix matches.
+      // Word-boundary matching ("Stud" finds "Straight Studs Fucking"; pure startsWith would miss).
       const lowerSearch = searchTerm.toLowerCase();
+      const words = replacementTagName.toLowerCase().split(/\s+/);
+      const wordPrefixMatch = lowerSearch.length >= 2 &&
+        words.some(w => w.startsWith(lowerSearch));
       if (
-        lowerSearch.length >= 2 &&
-        replacementTagName.toLowerCase().startsWith(lowerSearch) &&
+        wordPrefixMatch &&
         _cachedHiddenTagObj &&
         !visible.some(t => t.name === replacementTagName)
       ) {
-        visible.push({ ..._cachedHiddenTagObj, name: replacementTagName });
+        visible.push(makeReplacement(_cachedHiddenTagObj));
       }
     }
 
