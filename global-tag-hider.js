@@ -19,6 +19,7 @@ let showFAB               = true;
 let hideFemalePerformers  = false;
 let hideObserver          = null;
 let _cachedHiddenTagObj   = null;
+let _origFetch            = null;   // pre-interceptor fetch, used by warmFetchCache
 
 const DEFAULT_HIDDEN_TAGS = [
   "Tits", "Big Tits", "Small Tits", "Natural Tits", "Fake Tits", "Huge Tits", "Medium Tits",
@@ -896,23 +897,43 @@ function onNavigation() {
 //
 // Fetches a full tag object for one of the hidden tags so that the replacement
 // option can be injected even when the user types the replacement label before
-// ever searching for a hidden tag (i.e. before the interceptor has naturally
-// cached a full object).  Uses the same field set as Stash's TagSelect query.
+// ever interacting with the dropdown.
+//
+// Uses _origFetch (pre-interceptor) to bypass our own fetch interceptor — this
+// prevents the passive-cache block from poisoning _cachedHiddenTagObj with a
+// response that has a different field set than Stash's dropdown query.
+//
+// Requests BOTH scalar counts (parent_count, child_count) AND relation arrays
+// (parents, children) so the cached object works regardless of which form
+// Stash's internal code accesses.
 async function warmFetchCache() {
-  if (_cachedHiddenTagObj) return;                     // already warm
+  if (_cachedHiddenTagObj) return;
   if (!replaceWithStraight || hiddenTagIds.size === 0) return;
+  if (!_origFetch) return;
 
   const [firstId] = hiddenTagIds;
   try {
-    // Use findTags filtered by ID — same endpoint, same field set as Stash's dropdown query
-    const result = await callGQL(`
-      query GTHWarmCache($ids: [ID!]) {
-        findTags(tag_filter: { id: { value: $ids, modifier: INCLUDES } }, filter: { per_page: 1 }) {
-          tags { id name aliases image_path scene_count parent_count child_count }
-        }
-      }
-    `, { ids: [firstId] });
-    const tags = result?.data?.findTags?.tags;
+    const resp = await _origFetch("/graphql", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        query: `
+          query GTHWarmCache($ids: [ID!]) {
+            findTags(tag_filter: { id: { value: $ids, modifier: INCLUDES } }, filter: { per_page: 1 }) {
+              tags {
+                id name aliases image_path
+                scene_count parent_count child_count
+                parents { id name }
+                children { id name }
+              }
+            }
+          }
+        `,
+        variables: { ids: [firstId] }
+      })
+    });
+    const json = await resp.json();
+    const tags = json?.data?.findTags?.tags;
     if (Array.isArray(tags) && tags.length > 0) {
       _cachedHiddenTagObj = tags[0];
     }
@@ -925,7 +946,8 @@ function installFetchInterceptor() {
   if (window._gthFetchInstalled) return;
   window._gthFetchInstalled = true;
 
-  const origFetch = window.fetch;
+  _origFetch = window.fetch;
+  const origFetch = _origFetch;
   window.fetch = async function(resource, options) {
     // Fast-path: not a GraphQL POST
     const url = typeof resource === "string" ? resource
