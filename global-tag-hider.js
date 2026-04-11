@@ -222,8 +222,6 @@ function applyHiding() {
     }
   }
 
-  const _onTagsPage = isTagsPage();
-
   // --- Pass 1: links whose href contains /tags/ ---
   document.querySelectorAll('a[href*="/tags/"]').forEach(link => {
     // Skip image-only wrappers (e.g. the thumbnail <a><img/></a> on tag cards).
@@ -257,14 +255,6 @@ function applyHiding() {
       link.closest("li, [class*='col']") ||
       link.closest(".card") ||
       findContainer(link);
-
-    if (_onTagsPage) {
-      console.log("[GTH-debug] Tags page hidden link:", href,
-        "| text:", JSON.stringify(link.textContent.trim()),
-        "| container:", container?.tagName, container?.className,
-        "| containerIsLink:", container === link,
-        "| replaceMode:", replaceWithStraight);
-    }
 
     processTagLink(link, container);
   });
@@ -307,9 +297,17 @@ function applyHiding() {
   }
 
   // --- react-select dropdown options ---
+  // We store the original tag text in data-gth-orig-text before the first rename
+  // so that subsequent applyHiding() calls can still identify this element as a
+  // hidden-tag option even after its visible text has been changed.
+  // Without this, a renamed option ("Straight Studs Fucking") no longer matches
+  // hiddenNames, causing each new call to promote the next hidden option into a
+  // second visible replacement — cascading until all options show the label.
   let replacementOptionDone = false;
   document.querySelectorAll(".react-select__option").forEach(el => {
-    if (!hiddenNames.has(el.textContent.trim().toLowerCase())) return;
+    const origText = el.dataset.gthOrigText || el.textContent.trim();
+    if (!hiddenNames.has(origText.toLowerCase())) return;
+    if (!el.dataset.gthOrigText) el.dataset.gthOrigText = el.textContent.trim();
     if (replaceWithStraight && !replacementOptionDone) {
       if (el.textContent.trim() !== replacementTagName) el.textContent = replacementTagName;
       el.style.display = ""; replacementOptionDone = true;
@@ -319,7 +317,10 @@ function applyHiding() {
   // --- Selected tag chips ---
   document.querySelectorAll(".react-select__multi-value").forEach(el => {
     const label = el.querySelector(".react-select__multi-value__label");
-    if (!label || !hiddenNames.has(label.textContent.trim().toLowerCase())) return;
+    if (!label) return;
+    const origText = label.dataset.gthOrigText || label.textContent.trim();
+    if (!hiddenNames.has(origText.toLowerCase())) return;
+    if (!label.dataset.gthOrigText) label.dataset.gthOrigText = label.textContent.trim();
     if (replaceWithStraight) {
       if (label.textContent !== replacementTagName) label.textContent = replacementTagName;
       el.style.display = "";
