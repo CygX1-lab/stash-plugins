@@ -149,35 +149,59 @@ function applyHiding() {
   if (hiddenTagIds.size === 0 && femalePerformerIds.size === 0) return;
   const hiddenNames = getHiddenTagNames();
 
-  // --- Tag links — works on the Tags list page (cards) AND scene/performer
-  //     detail pages (inline badges).  We pick the smallest wrapping element
-  //     that represents one tag so we never accidentally hide a whole section.
-  let replacementDone = false;
+  // Find the right leaf element to write the replacement label into.
+  // We must NEVER call textContent= on an element that has child elements —
+  // doing so destroys those children (including the <a> link we depend on for
+  // future applyHiding() calls), which is why "Straight" would persist forever.
+  //
+  // Rules:
+  //  • If the container has a heading that is a leaf AND is NOT an ancestor/
+  //    descendant of the link, use the heading (tag-card case).
+  //  • Otherwise write directly to the link (scene-detail badge case).
+  function textTarget(link, container) {
+    const heading = container.querySelector(
+      "h5, h4, h3, h2, [class*='title'], [class*='Title']"
+    );
+    if (
+      heading &&
+      !heading.firstElementChild &&      // leaf — safe to overwrite
+      !heading.contains(link) &&         // heading is not a parent of the link
+      !link.contains(heading)            // link is not a parent of the heading
+    ) return heading;
+    return link;
+  }
+
+  // Apply hide-or-replace to one matched tag container.
+  // Unlike the old code there is NO per-page replacementDone gate — every
+  // hidden tag is processed, exactly like female performers are all hidden.
+  function processTagLink(link, container) {
+    if (replaceWithStraight) {
+      const t = textTarget(link, container);
+      if (t.textContent.trim() !== replacementTagName) t.textContent = replacementTagName;
+      container.style.display = "";
+    } else {
+      container.style.display = "none";
+    }
+  }
+
+  // --- Pass 1: links whose href contains /tags/ ---
   document.querySelectorAll('a[href*="/tags/"]').forEach(link => {
     const href = link.getAttribute("href");
     const match = href.match(/\/tags\/(\d+)/);
 
-    // Primary: match by numeric ID in the href (tag list page, most detail pages).
-    // Fallback: name-based slug URLs (e.g. /tags/pussy-licking on scene detail
-    //           pages).  We stamp a data attribute on first match so subsequent
-    //           applyHiding() calls can still find the link even after its text
-    //           has been overwritten by the replacement label.
+    // Primary: numeric ID.  Fallback: name-slug URL — stamp data-gth-hidden so
+    // subsequent calls can still find the link after its text has been mutated.
     let isHidden = false;
     if (match) {
       isHidden = hiddenTagIds.has(match[1]);
     } else if (link.dataset.gthHidden) {
-      isHidden = true; // already stamped — still hidden
+      isHidden = true;
     } else {
       const textName = link.textContent.trim().toLowerCase();
-      if (hiddenNames.has(textName)) {
-        isHidden = true;
-        link.dataset.gthHidden = "1"; // stamp so we survive text mutation
-      }
+      if (hiddenNames.has(textName)) { isHidden = true; link.dataset.gthHidden = "1"; }
     }
     if (!isHidden) return;
 
-    // Tag-list page: the link lives inside a full card element.
-    // Scene / performer detail: the link IS the badge (or sits in a tiny wrapper).
     const container =
       link.closest(".card, .tag-card, [class*='TagCard']") ||
       link.closest(".badge, [class*='tag-item'], [class*='TagLink'], [class*='tag-link']") ||
@@ -185,22 +209,32 @@ function applyHiding() {
       link.closest("li, [class*='col']") ||
       findContainer(link);
 
-    if (replaceWithStraight && !replacementDone) {
-      // On tag-list cards look for a heading element; on inline badges change
-      // the link text directly.
-      const heading = container.querySelector(
-        "h5, h4, h3, h2, [class*='title'], [class*='Title']"
-      );
-      if (heading) {
-        if (heading.textContent !== replacementTagName) heading.textContent = replacementTagName;
-      } else {
-        if (link.textContent.trim() !== replacementTagName) link.textContent = replacementTagName;
-      }
-      container.style.display = "";
-      replacementDone = true;
-    } else {
-      container.style.display = "none";
+    processTagLink(link, container);
+  });
+
+  // --- Pass 2: links whose href does NOT contain /tags/ ---
+  // Catches scene-detail tag badges that Stash renders with hash routing
+  // (#/tags/…) or other non-standard href patterns.
+  // Restricted to links inside a tag-context ancestor to avoid false positives
+  // on navigation links that happen to share a tag name.
+  document.querySelectorAll('a:not([href*="/tags/"])').forEach(link => {
+    if (!link.dataset.gthHidden) {
+      const textName = link.textContent.trim().toLowerCase();
+      if (!hiddenNames.has(textName)) return;
+      if (!link.closest(
+        '[class*="tag"], [class*="Tag"], [class*="badge"], [class*="Badge"], ' +
+        '[class*="detail"], [class*="Detail"]'
+      )) return;
+      link.dataset.gthHidden = "1";
     }
+
+    const container =
+      link.closest(".badge, [class*='tag-item'], [class*='TagLink'], [class*='tag-link']") ||
+      (link.offsetHeight < 50 ? link : null) ||
+      link.closest("li") ||
+      link;
+
+    processTagLink(link, container);
   });
 
   // --- Female performer cards / links (everywhere) ---
