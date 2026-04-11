@@ -189,6 +189,10 @@ function applyHiding() {
 
   // --- Pass 1: links whose href contains /tags/ ---
   document.querySelectorAll('a[href*="/tags/"]').forEach(link => {
+    // Skip image-only wrappers (e.g. the thumbnail <a><img/></a> on tag cards).
+    // Processing these would destroy the <img> child when setting textContent.
+    if (!link.textContent.trim()) return;
+
     const href = link.getAttribute("href");
     const match = href.match(/\/tags\/(\d+)/);
 
