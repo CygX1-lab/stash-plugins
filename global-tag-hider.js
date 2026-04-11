@@ -222,6 +222,8 @@ function applyHiding() {
     }
   }
 
+  const _onTagsPage = isTagsPage();
+
   // --- Pass 1: links whose href contains /tags/ ---
   document.querySelectorAll('a[href*="/tags/"]').forEach(link => {
     // Skip image-only wrappers (e.g. the thumbnail <a><img/></a> on tag cards).
@@ -255,6 +257,14 @@ function applyHiding() {
       link.closest("li, [class*='col']") ||
       link.closest(".card") ||
       findContainer(link);
+
+    if (_onTagsPage) {
+      console.log("[GTH-debug] Tags page hidden link:", href,
+        "| text:", JSON.stringify(link.textContent.trim()),
+        "| container:", container?.tagName, container?.className,
+        "| containerIsLink:", container === link,
+        "| replaceMode:", replaceWithStraight);
+    }
 
     processTagLink(link, container);
   });
