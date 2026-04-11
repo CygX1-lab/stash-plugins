@@ -174,11 +174,46 @@ function applyHiding() {
     return link;
   }
 
-  // Apply hide-or-replace to one matched tag container.
-  // Unlike the old code there is NO per-page replacementDone gate — every
-  // hidden tag is processed, exactly like female performers are all hidden.
+  // Per-applyHiding() set that tracks which "groups" have already received a
+  // replacement label.  Used only for inline-badge contexts (scene detail etc.)
+  // so that multiple hidden tags in the same row collapse into one label.
+  // Tag-card contexts (Tags list page) are NOT deduplicated — each card shows
+  // its own replacement label independently.
+  const replacedGroups = new Set();
+
   function processTagLink(link, container) {
     if (replaceWithStraight) {
+      // Determine context:
+      //   • "inline badge" — container is the link itself or a small badge wrapper
+      //     (scene detail tags row).  Deduplicate: first hidden tag in the row
+      //     shows the replacement label; subsequent ones are hidden.
+      //   • "card" — container is a standalone tag card (Tags list page).
+      //     No deduplication — every card shows its own replacement label.
+      const isInlineBadge = container === link ||
+        !!(container.matches && container.matches(
+          ".badge, [class*='tag-item'], [class*='TagLink'], [class*='tag-link']"
+        ));
+
+      if (isInlineBadge) {
+        // Group key: the element that holds all sibling badges together.
+        const group = container.parentElement || container;
+        if (replacedGroups.has(group)) {
+          container.style.display = "none";
+          return;
+        }
+        replacedGroups.add(group);
+
+        // When the container fell back to the link itself, the parent tag card
+        // may still have display:none from a previous hide-mode run.  Walk up
+        // and un-hide the nearest card ancestor so the replacement is visible.
+        if (container === link) {
+          const ancestorCard = link.closest(".tag-card, [class*='TagCard'], .card");
+          if (ancestorCard && ancestorCard.style.display === "none") {
+            ancestorCard.style.display = "";
+          }
+        }
+      }
+
       const t = textTarget(link, container);
       if (t.textContent.trim() !== replacementTagName) t.textContent = replacementTagName;
       container.style.display = "";
