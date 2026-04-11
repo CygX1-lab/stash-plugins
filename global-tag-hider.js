@@ -162,12 +162,15 @@ function applyHiding() {
     const heading = container.querySelector(
       "h5, h4, h3, h2, [class*='title'], [class*='Title']"
     );
-    if (
-      heading &&
-      !heading.firstElementChild &&      // leaf — safe to overwrite
-      !heading.contains(link) &&         // heading is not a parent of the link
-      !link.contains(heading)            // link is not a parent of the heading
-    ) return heading;
+    // Return the heading when it is a leaf text element AND the link is NOT
+    // nested inside it.  That covers both:
+    //   • heading inside the link  (link wraps heading — most Stash tag cards)
+    //   • heading beside the link  (siblings)
+    // The one case we must NOT use the heading is when it contains the link —
+    // overwriting heading.textContent would then destroy the link itself.
+    if (heading && !heading.firstElementChild && !heading.contains(link)) {
+      return heading;
+    }
     return link;
   }
 
@@ -202,11 +205,16 @@ function applyHiding() {
     }
     if (!isHidden) return;
 
+    // .tag-card / TagCard first (specific), then badge / tag-item wrappers,
+    // then size check (inline badges return the link itself — avoids grabbing
+    // the whole scene panel card that wraps scene-detail tag badges),
+    // then generic .card as last resort.
     const container =
-      link.closest(".card, .tag-card, [class*='TagCard']") ||
+      link.closest(".tag-card, [class*='TagCard']") ||
       link.closest(".badge, [class*='tag-item'], [class*='TagLink'], [class*='tag-link']") ||
       (link.offsetHeight < 50 ? link : null) ||
       link.closest("li, [class*='col']") ||
+      link.closest(".card") ||
       findContainer(link);
 
     processTagLink(link, container);
