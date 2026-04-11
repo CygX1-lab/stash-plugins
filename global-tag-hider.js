@@ -947,6 +947,12 @@ async function warmFetchCache() {
   // Tries up to 10 candidates and picks the first with scene_count > 0 so that the
   // replacement card on the Tags page doesn't initially show "0 Scenes".
   if (!_cachedHiddenTagObj) {
+    // Set a synthetic fallback immediately so the active-injection path never waits
+    // on network round-trips before it can operate.  The real object replaces this
+    // once the async fetch below completes.
+    const firstId = [...hiddenTagIds][0];
+    if (firstId) _cachedHiddenTagObj = makeSafeReplacementObj(firstId);
+
     const candidates = [];
     for (const id of hiddenTagIds) {
       const n = allTagsMap.get(String(id));
@@ -1045,24 +1051,45 @@ function installFetchInterceptor() {
     try { body = JSON.parse(typeof options.body === "string" ? options.body : null); }
     catch { return origFetch.apply(this, arguments); }
 
+    // --- findTag: fix name + scene_count on the tag detail page ---
+    // The tag detail page fetches findTag(id) for its header stats.  Without this,
+    // the stat block would show the real tag name and one tag's scene_count.
+    if (/\bfindTag\b/.test(body?.query ?? "")) {
+      const resp = await origFetch.apply(this, arguments);
+      let json; try { json = await resp.json(); } catch { return resp; }
+      const tag = json?.data?.findTag;
+      if (tag && hiddenTagIds.has(String(tag.id))) {
+        tag.name = replacementTagName;
+        if (_totalHiddenSceneCount !== null) tag.scene_count = _totalHiddenSceneCount;
+        return new Response(JSON.stringify(json), {
+          status: resp.status, headers: { "content-type": "application/json" }
+        });
+      }
+      return new Response(JSON.stringify(json), {
+        status: resp.status, headers: { "content-type": "application/json" }
+      });
+    }
+
     // --- findScenes: expand a hidden-tag filter to ALL hidden tags ---
     // When Stash queries scenes for one hidden tag (e.g. the replacement card's ID),
     // rewrite the filter to include every hidden tag with INCLUDES so the user sees
     // all "Straight Studs Fucking" scenes, not just the one tag's scenes.
     // Only rewrite when every ID in the filter is a hidden tag (avoids touching
     // mixed filters that the user set up themselves with non-hidden tags).
+    // Handles both snake_case (scene_filter) and camelCase (sceneFilter) variable names.
     if (/\bfindScenes\b/.test(body?.query ?? "")) {
-      const tf = body?.variables?.scene_filter?.tags;
+      const sfKey = body?.variables?.scene_filter  ? "scene_filter"
+                  : body?.variables?.sceneFilter   ? "sceneFilter"
+                  : null;
+      const sf = sfKey && body.variables[sfKey];
+      const tf = sf?.tags;
       if (tf && Array.isArray(tf.value) && tf.value.length > 0 &&
           tf.value.every(id => hiddenTagIds.has(String(id)))) {
         const expanded = {
           ...body,
           variables: {
             ...body.variables,
-            scene_filter: {
-              ...body.variables.scene_filter,
-              tags: { value: [...hiddenTagIds], modifier: "INCLUDES" },
-            },
+            [sfKey]: { ...sf, tags: { value: [...hiddenTagIds], modifier: "INCLUDES" } },
           },
         };
         return origFetch.call(this, resource, { ...options, body: JSON.stringify(expanded) });
