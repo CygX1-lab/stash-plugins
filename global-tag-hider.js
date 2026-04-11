@@ -668,6 +668,7 @@ function injectSettingsPanel() {
   wireReplacementTagSelector("gth-s-replace-tag");
   document.getElementById("gth-s-replace").onchange = e => {
     replaceWithStraight = e.target.checked; savePreferences(); applyHiding();
+    if (replaceWithStraight) warmFetchCache();
     const opts = document.getElementById("gth-s-replace-tag-opts");
     if (opts) opts.style.display = replaceWithStraight ? "" : "none";
   };
@@ -795,6 +796,7 @@ async function showModal() {
   wireReplacementTagSelector("gth-modal-replace-tag");
   document.getElementById("gth-replace-toggle").onchange = e => {
     replaceWithStraight = e.target.checked; savePreferences(); applyHiding();
+    if (replaceWithStraight) warmFetchCache();
     const opts = document.getElementById("gth-modal-replace-tag-opts");
     if (opts) opts.style.display = replaceWithStraight ? "" : "none";
     const s = document.getElementById("gth-s-replace"); if (s) s.checked = replaceWithStraight;
@@ -940,51 +942,58 @@ async function warmFetchCache() {
   if (!replaceWithStraight || hiddenTagIds.size === 0) return;
   if (!_origFetch) return;
 
-  // Find the first hidden tag that we know the name of
-  let warmId = null;
-  let warmName = null;
+  // Build a list of up to 10 hidden tag candidates (those with known names).
+  // We try each in order until we find one with scene_count > 0, so the
+  // replacement label on the Tags page shows a non-zero scene count and is
+  // immediately useful.  The first matched tag (even with 0 scenes) is kept as
+  // a fallback so injection never silently skips.
+  const candidates = [];
   for (const id of hiddenTagIds) {
     const n = allTagsMap.get(String(id));
-    if (n) { warmId = id; warmName = n; break; }
+    if (n) { candidates.push({ id, name: n }); }
+    if (candidates.length >= 10) break;
   }
-  if (!warmName) return;
+  if (!candidates.length) return;
 
-  try {
-    // Use a plain text search — universally supported across all Stash versions.
-    // Use _origFetch to bypass our own interceptor so we get the full field set
-    // that Stash's dropdown query returns, without polluting the passive cache.
-    const resp = await _origFetch("/graphql", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        query: `
-          query GTHWarmCache($q: String) {
-            findTags(filter: { q: $q, per_page: 10 }) {
-              tags {
-                id name aliases image_path
-                scene_count parent_count child_count
-                parents { id name }
-                children { id name }
-              }
-            }
-          }
-        `,
-        variables: { q: warmName }
-      })
-    });
-    const json = await resp.json();
-    const tags = json?.data?.findTags?.tags;
-    if (Array.isArray(tags)) {
-      // Pick the tag that is actually in our hidden set
-      const match = tags.find(t => hiddenTagIds.has(String(t.id)));
-      if (match) { _cachedHiddenTagObj = match; return; }
+  const gql = `
+    query GTHWarmCache($q: String) {
+      findTags(filter: { q: $q, per_page: 10 }) {
+        tags {
+          id name aliases image_path
+          scene_count parent_count child_count
+          parents { id name }
+          children { id name }
+        }
+      }
     }
-  } catch (e) {
-    console.warn("[GlobalTagHider] warmFetchCache failed:", e);
+  `;
+
+  // Use _origFetch to bypass our own interceptor — prevents passive-cache
+  // poisoning with a response that has a different field set.
+  let firstMatch = null;
+  for (const { id: warmId, name: warmName } of candidates) {
+    try {
+      const resp = await _origFetch("/graphql", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: gql, variables: { q: warmName } })
+      });
+      const json = await resp.json();
+      const tags = json?.data?.findTags?.tags;
+      if (Array.isArray(tags)) {
+        const match = tags.find(t => hiddenTagIds.has(String(t.id)));
+        if (match) {
+          if (match.scene_count > 0) { _cachedHiddenTagObj = match; return; }
+          if (!firstMatch) firstMatch = match;  // keep as fallback even if 0 scenes
+        }
+      }
+    } catch (e) {
+      console.warn("[GlobalTagHider] warmFetchCache attempt failed:", e);
+    }
   }
 
-  // Fall back to a safe synthetic object so injection never silently skips
-  _cachedHiddenTagObj = makeSafeReplacementObj(warmId);
+  // None of the candidates had scenes — use first matched tag or synthetic fallback
+  _cachedHiddenTagObj = firstMatch || makeSafeReplacementObj(candidates[0].id);
 }
 
 function installFetchInterceptor() {
@@ -1011,13 +1020,21 @@ function installFetchInterceptor() {
     try { body = JSON.parse(typeof options.body === "string" ? options.body : null); }
     catch { return origFetch.apply(this, arguments); }
 
-    // Must be a findTags query
-    if (!/\bfindTags\b/.test(body?.query ?? "")) {
+    // Must be a findTags query with a text search term.
+    // Accept two variable paths:
+    //   filter.q          — scene-tag dropdown (react-select autocomplete)
+    //   tagFilter.name.value — Tags navigation page search bar
+    // Non-search findTags (loadAllTags, sort/pagination without a term) must
+    // pass through completely unmodified — body not consumed, all headers intact.
+    const filterQ       = body?.variables?.filter?.q?.trim();
+    const tagFilterName = body?.variables?.tagFilter?.name?.value?.trim();
+    const searchTerm    = filterQ || tagFilterName;
+
+    if (!/\bfindTags\b/.test(body?.query ?? "") || !searchTerm) {
       return origFetch.apply(this, arguments);
     }
 
-    const hasSearchTerm = !!body?.variables?.filter?.q;
-
+    // From here we know this is a user-typed tag search.
     const resp = await origFetch.apply(this, arguments);
     let json;
     try { json = await resp.json(); }
@@ -1026,16 +1043,6 @@ function installFetchInterceptor() {
     const tags = json?.data?.findTags?.tags;
     if (!Array.isArray(tags)) {
       return new Response(JSON.stringify(json), { status: resp.status, headers: { "content-type": "application/json" } });
-    }
-
-    // Only filtering and injection apply to search-term queries.
-    // Non-search findTags (e.g. loadAllTags with only {id,name}) must pass through
-    // unmodified — and must NOT populate the cache, which needs a full field set.
-    if (!hasSearchTerm) {
-      return new Response(JSON.stringify(json), {
-        status: resp.status,
-        headers: { "content-type": "application/json" },
-      });
     }
 
     // Partition results
@@ -1051,7 +1058,7 @@ function installFetchInterceptor() {
       }
     } else {
       // User is typing the replacement label — inject from cache if prefix matches
-      const lowerSearch = body.variables.filter.q.trim().toLowerCase();
+      const lowerSearch = searchTerm.toLowerCase();
       if (
         lowerSearch.length >= 2 &&
         replacementTagName.toLowerCase().startsWith(lowerSearch) &&
