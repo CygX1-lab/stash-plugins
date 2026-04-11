@@ -884,12 +884,12 @@ function onNavigation() {
 // removed at the data level and ONE replacement option is injected in their
 // place.  This means:
 //   • Typing "Pussy" in the tags dropdown  → ONE "Straight Studs Fucking" option
-//   • Typing "Straight Studs Fucking"      → the replacement option is found
-//   • No hidden tags leak through into the search results
+//   • No hidden tag names leak through into the search results
 //
-// The replacement option is backed by the first hidden tag's real ID so that
-// selecting it actually saves a tag to the scene.  The saved tag is hidden in
-// the UI and shown as the replacement label everywhere.
+// The replacement option is a copy of the first hidden tag found (all server
+// fields preserved, only the name overwritten) so Stash's code never hits
+// undefined on missing properties.  Selecting it saves the backing tag to the
+// scene; the UI then displays it as the replacement label everywhere.
 
 function installFetchInterceptor() {
   if (window._gthFetchInstalled) return;
@@ -933,23 +933,19 @@ function installFetchInterceptor() {
     const visible   = tags.filter(t => !hiddenTagIds.has(String(t.id)));
     const hidden    = tags.filter(t =>  hiddenTagIds.has(String(t.id)));
 
-    // Also inject when the user is typing the replacement label itself
-    // (server returns nothing for it since it's not a real tag name)
-    const lowerSearch  = body.variables.filter.q.trim().toLowerCase();
-    const lowerReplace = replacementTagName.toLowerCase();
-    const typingLabel  = lowerSearch.length >= 2 && lowerReplace.startsWith(lowerSearch);
-
-    if (hidden.length > 0 || typingLabel) {
-      // Back the synthetic option with the first found hidden tag (or any known
-      // hidden tag ID if the server returned nothing for a label search).
-      const primary = hidden[0] ?? { id: [...hiddenTagIds][0] };
-      // Avoid adding a duplicate if a "Straight Studs Fucking" real tag exists
-      if (primary && !visible.some(t => t.name === replacementTagName)) {
-        visible.push({ id: primary.id, name: replacementTagName, aliases: [] });
-      }
+    // If any hidden tags were found, inject ONE replacement option.
+    // Spread the full server object so Stash's code never hits undefined
+    // when it accesses fields like image_path, scene_count, etc.
+    if (hidden.length > 0 && !visible.some(t => t.name === replacementTagName)) {
+      visible.push({ ...hidden[0], name: replacementTagName });
     }
 
     json.data.findTags.tags = visible;
+    // Keep count consistent with the filtered+injected result set.
+    if (typeof json.data.findTags.count === "number") {
+      json.data.findTags.count = visible.length;
+    }
+
     return new Response(JSON.stringify(json), {
       status: resp.status,
       headers: { "content-type": "application/json" },

@@ -2,7 +2,7 @@
   name: Global Tag Hider - Gay Edition
   metadata:
     description: Hide tags and female performers globally across the Stash UI. Ships with 50+ female-tag defaults, a "Replace with Straight" mode, per-preference settings panel, and a Tags page toolbar button. Perfect for male/gay-only Stash setups.
-  version: 1.4.0
+  version: 1.4.1
   date: 2026-04-11 01:00:00
   path: global-tag-hider.zip
-  sha256: 8aac5cad9e9b51b16d6b6cf319be2424282b3f8cd953acab04abac4456ccdc43
+  sha256: 8840911f1a23a5691a8a86e73c3c4366b52d45b71c4ef4bce091faae6aa35ff1
