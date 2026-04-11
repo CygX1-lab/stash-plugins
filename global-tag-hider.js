@@ -22,22 +22,26 @@ let _cachedHiddenTagObj   = null;
 let _origFetch            = null;   // pre-interceptor fetch, used by warmFetchCache
 
 const DEFAULT_HIDDEN_TAGS = [
-  "Tits", "Big Tits", "Small Tits", "Natural Tits", "Fake Tits", "Huge Tits", "Medium Tits",
+  // Tits / boobs
+  "Big Tits", "Small Tits", "Natural Tits", "Fake Tits", "Huge Tits", "Medium Tits", "Tiny Tits",
   "Cum on Tits", "Tit Worship", "Titjob", "Titty Fuck",
-  "Boobs", "Fake Boobs", "Medium Boobs", "Cleavage",
-  "Pussy", "Wet Pussy", "Shaved Pussy", "Trimmed Pussy",
-  "Innie Pussy", "Outie Pussy", "Cum on Pussy",
-  "Pussy Licking", "Pussy Fingering", "Pussy Rubbing", "Pussy Gape", "Cunnilingus",
+  "Fake Boobs", "Medium Boobs",
+  // Pussy
+  "Pussy", "Trimmed Pussy", "Innie Pussy", "Outie Pussy", "Cum on Pussy",
+  "Pussy Licking", "Pussy Fingering", "Pussy Rubbing", "Pussy Gape",
+  // Cowgirl positions
   "Cowgirl", "Reverse Cowgirl", "Anal Cowgirl", "Anal Reverse Cowgirl",
-  "Lesbian", "Lesbian Kissing", "Girl on Girl",
-  "FF", "Female Masturbation", "Squirt", "Tribbing", "Scissoring", "Strap-on",
-  "MILF", "Young Girl", "Schoolgirl", "Teen Girl (18\u201322)",
+  // Age / body descriptors
+  "Schoolgirl", "Teen Girl (18\u201322)",
   "Girlfriend", "Other Person's Girlfriend", "For Girls",
   "Young Woman (22-30)", "Young Woman (22\u201330)", "Woman 30-39",
   "Short Woman", "Average Height Woman", "Tall Woman",
-  "White Woman", "Latin Woman", "Latina Woman", "Athletic Woman",
+  "White Woman", "Latin Woman", "Latina Woman",
+  // Hair colour (Female)
   "Black Hair (Female)", "Blonde Hair (Female)", "Brown Hair (Female)", "Red Hair (Female)",
+  // Solo / trans
   "Solo Female", "Transgender (Female)",
+  // Accessories
   "Woman's Heels",
   // Vaginal sex acts
   "Vaginal Sex", "Vaginal Penetration", "All Vaginal",
@@ -906,20 +910,56 @@ function onNavigation() {
 // Requests BOTH scalar counts (parent_count, child_count) AND relation arrays
 // (parents, children) so the cached object works regardless of which form
 // Stash's internal code accesses.
+// Build a safe fallback object for the replacement option when no real
+// server-returned object is available yet.  All potential array fields are
+// initialised to [] so Stash never crashes with "Cannot read properties of
+// undefined (reading 'length')" on aliases / parents / children.
+function makeSafeReplacementObj(id) {
+  return {
+    __typename: "Tag",
+    id: String(id),
+    name: replacementTagName,
+    aliases: [],
+    description: null,
+    ignore_auto_tag: false,
+    image_path: null,
+    scene_count: 0,
+    marker_count: 0,
+    image_count: 0,
+    gallery_count: 0,
+    performer_count: 0,
+    parent_count: 0,
+    child_count: 0,
+    parents: [],
+    children: [],
+  };
+}
+
 async function warmFetchCache() {
   if (_cachedHiddenTagObj) return;
   if (!replaceWithStraight || hiddenTagIds.size === 0) return;
   if (!_origFetch) return;
 
-  const [firstId] = hiddenTagIds;
+  // Find the first hidden tag that we know the name of
+  let warmId = null;
+  let warmName = null;
+  for (const id of hiddenTagIds) {
+    const n = allTagsMap.get(String(id));
+    if (n) { warmId = id; warmName = n; break; }
+  }
+  if (!warmName) return;
+
   try {
+    // Use a plain text search — universally supported across all Stash versions.
+    // Use _origFetch to bypass our own interceptor so we get the full field set
+    // that Stash's dropdown query returns, without polluting the passive cache.
     const resp = await _origFetch("/graphql", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         query: `
-          query GTHWarmCache($ids: [ID!]) {
-            findTags(tag_filter: { id: { value: $ids, modifier: INCLUDES } }, filter: { per_page: 1 }) {
+          query GTHWarmCache($q: String) {
+            findTags(filter: { q: $q, per_page: 10 }) {
               tags {
                 id name aliases image_path
                 scene_count parent_count child_count
@@ -929,17 +969,22 @@ async function warmFetchCache() {
             }
           }
         `,
-        variables: { ids: [firstId] }
+        variables: { q: warmName }
       })
     });
     const json = await resp.json();
     const tags = json?.data?.findTags?.tags;
-    if (Array.isArray(tags) && tags.length > 0) {
-      _cachedHiddenTagObj = tags[0];
+    if (Array.isArray(tags)) {
+      // Pick the tag that is actually in our hidden set
+      const match = tags.find(t => hiddenTagIds.has(String(t.id)));
+      if (match) { _cachedHiddenTagObj = match; return; }
     }
   } catch (e) {
     console.warn("[GlobalTagHider] warmFetchCache failed:", e);
   }
+
+  // Fall back to a safe synthetic object so injection never silently skips
+  _cachedHiddenTagObj = makeSafeReplacementObj(warmId);
 }
 
 function installFetchInterceptor() {
