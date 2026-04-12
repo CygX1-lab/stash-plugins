@@ -29,6 +29,7 @@ Plugin for Stash to enhance gay experience by hiding female performers and repla
 ### 4. Versioning
 - Bug fixes always end up in a minor version update (+0.0.1), +0.1.0 and +1.0.0 updates are reserved for medium and major feature updates, respectively, which always require user approval.
 - Use Vienna time zone (switch to summer time as appropriate) to create time stamps
+- When doen with your chnages prepare the plugin package (zip) and commit to git with an appropriate commit message
 
 ### 4. Testing
 - Write tests for all new features and bug fixes

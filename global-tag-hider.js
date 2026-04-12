@@ -891,7 +891,9 @@ function onNavigation() {
   if (!isSettingsPage()) {
     document.getElementById("gth-settings-panel")?.remove();
   }
+  // Two-pass retry: 600ms covers fast cached routes; 2000ms catches slow GraphQL loads.
   setTimeout(() => { applyHiding(); injectTagsPageButton(); injectSettingsPanel(); }, 600);
+  setTimeout(() => { applyHiding(); injectTagsPageButton(); injectSettingsPanel(); }, 2000);
 }
 
 // ---- GraphQL fetch interceptor ----
@@ -1205,7 +1207,11 @@ async function init() {
 
   if (hideObserver) hideObserver.disconnect();
   hideObserver = new MutationObserver(onDOMChange);
-  hideObserver.observe(document.body, { childList: true, subtree: true });
+  // characterData: true catches React filling in tag-link text after the container
+  // is already in the DOM — without it, applyHiding() fires while links are still
+  // empty, skips them, and only runs again when a later childList mutation (e.g. a
+  // hover tooltip) accidentally re-triggers it.
+  hideObserver.observe(document.body, { childList: true, subtree: true, characterData: true });
 
   if (window.PluginApi?.Event) {
     PluginApi.Event.addEventListener("stash:location", onNavigation);
