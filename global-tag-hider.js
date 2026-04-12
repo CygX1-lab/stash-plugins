@@ -236,6 +236,29 @@ function applyHiding() {
     }
   }
 
+  // Diagnostic — visible in browser console (F12 → Console) when on a scene page.
+  // Helps diagnose whether tag <a> elements are present and recognised.
+  if (/\/scenes\/\d/.test(location.href)) {
+    const _links = document.querySelectorAll('a[href*="/tags/"]');
+    const _spans = document.querySelectorAll(
+      '.badge:not(a),[class*="tag-item"]:not(a),[class*="TagLink"]:not(a),[class*="tag-link"]:not(a)'
+    );
+    console.log(
+      `[GTH] applyHiding on scene — ${_links.length} tag <a> links, ` +
+      `${_spans.length} non-<a> tag elements, ` +
+      `hiddenIds=${hiddenTagIds.size}, replace=${replaceWithStraight}`
+    );
+    _links.forEach(a => {
+      const m = (a.getAttribute("href") || "").match(/\/tags\/(\d+)/);
+      console.log(`  <a> href="${a.getAttribute("href")}" text="${a.textContent.trim()}" ` +
+        `hiddenById=${m ? hiddenTagIds.has(m[1]) : "n/a"}`);
+    });
+    _spans.forEach(el => {
+      console.log(`  <${el.tagName.toLowerCase()}> class="${el.className}" ` +
+        `text="${el.textContent.trim()}" hiddenByName=${hiddenNames.has(el.textContent.trim().toLowerCase())}`);
+    });
+  }
+
   // --- Pass 1: links whose href contains /tags/ ---
   document.querySelectorAll('a[href*="/tags/"]').forEach(link => {
     // Skip image-only wrappers (e.g. the thumbnail <a><img/></a> on tag cards).
@@ -296,6 +319,30 @@ function applyHiding() {
       link;
 
     processTagLink(link, container);
+  });
+
+  // --- Pass 3: non-<a> tag-badge elements (scene detail before hover activates link) ---
+  // Some Stash builds render tag names as <span>/<div> initially and only wrap them
+  // in <a href="/tags/ID"> when the user hovers (to keep DOM light).  Pass 1 & 2
+  // only match <a> elements, so this pass catches the plain-text badge variants.
+  document.querySelectorAll(
+    '.badge:not(a), [class*="tag-item"]:not(a), [class*="TagLink"]:not(a), [class*="tag-link"]:not(a)'
+  ).forEach(el => {
+    if (el.querySelector("a")) return;   // has an <a> inside — Pass 1/2 already cover it
+    if (!el.dataset.gthHidden) {
+      const textName = el.textContent.trim().toLowerCase();
+      if (!hiddenNames.has(textName)) return;
+      el.dataset.gthHidden = "1";
+    }
+    const group = el.parentElement || el;
+    if (replacedGroups.has(group)) { el.style.display = "none"; return; }
+    replacedGroups.add(group);
+    if (replaceWithStraight) {
+      if (el.textContent.trim() !== replacementTagName) el.textContent = replacementTagName;
+      el.style.display = "";
+    } else {
+      el.style.display = "none";
+    }
   });
 
   // --- Female performer cards / links (everywhere) ---
@@ -1234,6 +1281,13 @@ async function init() {
     PluginApi.Event.addEventListener("stash:location", onNavigation);
   }
   window.addEventListener("hashchange", onNavigation);
+
+  // URL-change fallback: catches pushState navigation when PluginApi is unavailable
+  // or stash:location doesn't fire, ensuring onNavigation() (and its polling) runs.
+  let _lastUrl = location.href;
+  setInterval(() => {
+    if (location.href !== _lastUrl) { _lastUrl = location.href; onNavigation(); }
+  }, 300);
   window.addEventListener("popstate",   onNavigation);
 
   console.log("[GlobalTagHider] Ready.");
