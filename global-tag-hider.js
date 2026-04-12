@@ -53,7 +53,7 @@ const DEFAULT_HIDDEN_TAGS = [
 function loadHiddenTags() {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
-    hiddenTagIds = new Set(stored ? JSON.parse(stored) : []);
+    hiddenTagIds = new Set((stored ? JSON.parse(stored) : []).map(String));
   } catch (e) { hiddenTagIds = new Set(); }
 }
 
@@ -234,29 +234,6 @@ function applyHiding() {
     } else {
       container.style.display = "none";
     }
-  }
-
-  // Diagnostic — visible in browser console (F12 → Console) when on a scene page.
-  // Helps diagnose whether tag <a> elements are present and recognised.
-  if (/\/scenes\/\d/.test(location.href)) {
-    const _links = document.querySelectorAll('a[href*="/tags/"]');
-    const _spans = document.querySelectorAll(
-      '.badge:not(a),[class*="tag-item"]:not(a),[class*="TagLink"]:not(a),[class*="tag-link"]:not(a)'
-    );
-    console.log(
-      `[GTH] applyHiding on scene — ${_links.length} tag <a> links, ` +
-      `${_spans.length} non-<a> tag elements, ` +
-      `hiddenIds=${hiddenTagIds.size}, replace=${replaceWithStraight}`
-    );
-    _links.forEach(a => {
-      const m = (a.getAttribute("href") || "").match(/\/tags\/(\d+)/);
-      console.log(`  <a> href="${a.getAttribute("href")}" text="${a.textContent.trim()}" ` +
-        `hiddenById=${m ? hiddenTagIds.has(m[1]) : "n/a"}`);
-    });
-    _spans.forEach(el => {
-      console.log(`  <${el.tagName.toLowerCase()}> class="${el.className}" ` +
-        `text="${el.textContent.trim()}" hiddenByName=${hiddenNames.has(el.textContent.trim().toLowerCase())}`);
-    });
   }
 
   // --- Pass 1: links whose href contains /tags/ ---
