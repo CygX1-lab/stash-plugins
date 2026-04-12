@@ -352,13 +352,18 @@ function applyHiding() {
 }
 
 // ---- Debounced DOM change handler ----
+//
+// Trailing debounce: waits for 150 ms of DOM silence before running.
+// This matters on scene-detail pages where React makes multiple async render
+// passes (GraphQL data, state updates) — a leading debounce fires while React
+// is still mid-render, React then overwrites our text changes, and no further
+// mutation re-triggers us.  A trailing debounce waits until React is done.
 
-let changeScheduled = false;
+let _changeTimer = null;
 function onDOMChange() {
-  if (changeScheduled) return;
-  changeScheduled = true;
-  setTimeout(() => {
-    changeScheduled = false;
+  clearTimeout(_changeTimer);
+  _changeTimer = setTimeout(() => {
+    _changeTimer = null;
     applyHiding();
     injectTagsPageButton();
     injectSettingsPanel();
