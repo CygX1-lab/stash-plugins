@@ -155,6 +155,9 @@ function findContainer(el, maxLevels = 6) {
 function applyHiding() {
   if (hiddenTagIds.size === 0 && femalePerformerIds.size === 0) return;
   const hiddenNames = getHiddenTagNames();
+  if (/\/scenes\/\d/.test(location.href)) {
+    console.log(`[GTH] scene applyHiding: hiddenIds=${hiddenTagIds.size} allTagsMap=${allTagsMap.size} hiddenNames=${hiddenNames.size}`);
+  }
 
   // Find the right leaf element to write the replacement label into.
   // We must NEVER call textContent= on an element that has child elements —
@@ -1229,7 +1232,7 @@ function installFetchInterceptor() {
 // ---- Init ----
 
 async function init() {
-  console.log("[GlobalTagHider] Starting...");
+  console.log("[GlobalTagHider v1.4.14] Starting...");
   loadHiddenTags(); loadPreferences();
 
   installFetchInterceptor();
