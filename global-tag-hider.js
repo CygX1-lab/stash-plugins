@@ -353,17 +353,17 @@ function applyHiding() {
 
 // ---- Debounced DOM change handler ----
 //
-// Trailing debounce: waits for 150 ms of DOM silence before running.
-// This matters on scene-detail pages where React makes multiple async render
-// passes (GraphQL data, state updates) — a leading debounce fires while React
-// is still mid-render, React then overwrites our text changes, and no further
-// mutation re-triggers us.  A trailing debounce waits until React is done.
+// Leading debounce: fires 150 ms after the first mutation in a burst, ignoring
+// subsequent mutations in the same window.  This fires quickly and repeatedly
+// as React makes render passes, rather than waiting for a long silence window
+// (a trailing debounce never fires when Stash has background polling activity).
 
-let _changeTimer = null;
+let _changeScheduled = false;
 function onDOMChange() {
-  clearTimeout(_changeTimer);
-  _changeTimer = setTimeout(() => {
-    _changeTimer = null;
+  if (_changeScheduled) return;
+  _changeScheduled = true;
+  setTimeout(() => {
+    _changeScheduled = false;
     applyHiding();
     injectTagsPageButton();
     injectSettingsPanel();
@@ -886,6 +886,8 @@ async function showModal() {
 
 // ---- Navigation ----
 
+let _navPollTimer = null;
+
 function onNavigation() {
   document.getElementById("gth-tags-btn")?.remove();
   document.getElementById("gth-tags-btn-wrapper")?.remove();
@@ -896,9 +898,19 @@ function onNavigation() {
   if (!isSettingsPage()) {
     document.getElementById("gth-settings-panel")?.remove();
   }
-  // Two-pass retry: 600ms covers fast cached routes; 2000ms catches slow GraphQL loads.
-  setTimeout(() => { applyHiding(); injectTagsPageButton(); injectSettingsPanel(); }, 600);
-  setTimeout(() => { applyHiding(); injectTagsPageButton(); injectSettingsPanel(); }, 2000);
+  // Poll every 200 ms for 5 s after navigation.  This catches scene-detail tag
+  // badges that React renders asynchronously: the MutationObserver alone can miss
+  // the exact moment tags become available if Stash's background activity (polling,
+  // live data) fires mutations continuously and delays the leading debounce.
+  // Calls are idempotent — if tags are already correct subsequent calls do nothing.
+  clearInterval(_navPollTimer);
+  let _navPollCount = 0;
+  _navPollTimer = setInterval(() => {
+    applyHiding();
+    injectTagsPageButton();
+    injectSettingsPanel();
+    if (++_navPollCount >= 25) { clearInterval(_navPollTimer); _navPollTimer = null; }
+  }, 200);
 }
 
 // ---- GraphQL fetch interceptor ----
