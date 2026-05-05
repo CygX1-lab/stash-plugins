@@ -306,7 +306,7 @@ function applyHiding() {
   // in <a href="/tags/ID"> when the user hovers (to keep DOM light).  Pass 1 & 2
   // only match <a> elements, so this pass catches the plain-text badge variants.
   document.querySelectorAll(
-    '.badge:not(a), [class*="tag-item"]:not(a), [class*="TagLink"]:not(a), [class*="tag-link"]:not(a)'
+    '.badge:not(a), [class*="badge"]:not(a), [class*="Badge"]:not(a), [class*="tag-item"]:not(a), [class*="TagLink"]:not(a), [class*="tag-link"]:not(a)'
   ).forEach(el => {
     if (el.querySelector("a")) return;   // has an <a> inside — Pass 1/2 already cover it
     if (!el.dataset.gthHidden) {
@@ -324,6 +324,43 @@ function applyHiding() {
       el.style.display = "none";
     }
   });
+
+  // --- Pass 4: scene-detail text-match fallback ---
+  // When CSS-module hashing prevents Pass 3's class-based selectors from matching
+  // Stash's tag <span>/<div> elements, this pass walks every text node inside the
+  // detail section and replaces any whose visible text equals a hidden tag name.
+  // It runs on scene detail pages only to avoid false positives.
+  if (/\/scenes\/\d/.test(location.href)) {
+    const detailRoot = document.querySelector(
+      '[class*="detail"], [class*="Detail"], [class*="scene-detail"], [class*="SceneDetail"]'
+    );
+    const walker = document.createTreeWalker(
+      detailRoot || document.body, NodeFilter.SHOW_TEXT
+    );
+    const seen = new Set();
+    while (walker.nextNode()) {
+      const node = walker.currentNode;
+      const text = node.textContent.trim().toLowerCase();
+      if (!hiddenNames.has(text)) continue;
+      const holder = node.parentElement;
+      if (!holder || seen.has(holder)) continue;
+      seen.add(holder);
+      if (holder.firstElementChild) continue;
+      if (holder.dataset.gthHidden) continue;
+      holder.dataset.gthHidden = "1";
+      const group = holder.parentElement || holder;
+      if (replacedGroups.has(group)) { holder.style.display = "none"; continue; }
+      replacedGroups.add(group);
+      if (replaceWithStraight) {
+        if (holder.textContent.trim() !== replacementTagName) {
+          holder.textContent = replacementTagName;
+        }
+        holder.style.display = "";
+      } else {
+        holder.style.display = "none";
+      }
+    }
+  }
 
   // --- Female performer cards / links (everywhere) ---
   if (hideFemalePerformers && femalePerformerIds.size > 0) {
@@ -1232,7 +1269,7 @@ function installFetchInterceptor() {
 // ---- Init ----
 
 async function init() {
-  console.log("[GlobalTagHider v1.4.14] Starting...");
+  console.log("[GlobalTagHider v1.4.15] Starting...");
   loadHiddenTags(); loadPreferences();
 
   installFetchInterceptor();
