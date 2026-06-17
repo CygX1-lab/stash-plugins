@@ -364,48 +364,27 @@ function applyHiding() {
 
   // --- Female performer cards / links (everywhere) ---
   if (hideFemalePerformers && femalePerformerIds.size > 0) {
-    document.querySelectorAll('a[href*="/performers/"]').forEach(link => {
+    let hiddenCount = 0;
+    let allPerformerLinks = document.querySelectorAll('a[href*="/performers/"]');
+
+    allPerformerLinks.forEach(link => {
       const match = link.getAttribute("href").match(/\/performers\/(\d+)/);
       if (!match || !femalePerformerIds.has(match[1])) return;
+
       const container =
         link.closest(".card, .performer-card, li, [class*='col'], [class*='performer']")
         || findContainer(link);
-      container.style.display = "none";
+
+      if (container && container.style.display !== "none") {
+        container.style.display = "none";
+        hiddenCount++;
+      }
     });
 
-    // Additionally, look for "Recently Added Performers" sections and hide female performers within
-    // This handles cases where the section uses different class names or structure
-    const allText = document.body.innerText;
-    if (allText.includes("Recently Added Performers")) {
-      // Walk the DOM to find sections with "Recently Added Performers" text
-      const walker = document.createTreeWalker(
-        document.body, NodeFilter.SHOW_TEXT
-      );
-      const seen = new Set();
-      let textNode;
-      while ((textNode = walker.nextNode())) {
-        if (!textNode.textContent.includes("Recently Added Performers")) continue;
-        // Found the heading — walk up to find the container section
-        let section = textNode.parentElement;
-        while (section && section !== document.body) {
-          const nextSib = section.nextElementSibling;
-          if (nextSib) {
-            // Hide female performers within the next sibling (the actual content container)
-            nextSib.querySelectorAll('a[href*="/performers/"]').forEach(link => {
-              if (seen.has(link)) return;
-              seen.add(link);
-              const match = link.getAttribute("href").match(/\/performers\/(\d+)/);
-              if (!match || !femalePerformerIds.has(match[1])) return;
-              const container =
-                link.closest(".card, .performer-card, li, [class*='col'], [class*='performer'], [class*='grid']")
-                || findContainer(link);
-              container.style.display = "none";
-            });
-            break;
-          }
-          section = section.parentElement;
-        }
-      }
+    // Debug logging on home screen
+    const isHome = /^\/?(home)?$|^\/?$/.test(location.pathname);
+    if (isHome && (hiddenCount > 0 || /recently/i.test(document.body.innerText))) {
+      console.log(`[GlobalTagHider] Checked ${allPerformerLinks.size} performer links, hidden ${hiddenCount} female performers on home screen`);
     }
   }
 
